@@ -1,248 +1,210 @@
 #!/usr/bin/env python3
 """Download raw logs and artifacts for a GitHub Actions run.
 
-Requires GITHUB_TOKEN environment variable.
+Requires:
     export GITHUB_TOKEN="ghp_..."
+    pip install "ghapi>=2,<3"
 
 Usage:
-    python3 download_job_logs.py owner/repo 12345678
-    python3 download_job_logs.py owner/repo 12345678 --attempt 2 -o ./logs
+    python3 download_job_logs.py owner/repo RUN_ID
+    python3 download_job_logs.py owner/repo RUN_ID --attempt 2
+    python3 download_job_logs.py owner/repo RUN_ID -o ./logs
+    python3 download_job_logs.py owner/repo RUN_ID --skip-artifacts
+    python3 download_job_logs.py owner/repo RUN_ID -c 10
+    python3 download_job_logs.py owner/repo RUN_ID -q
+
+Options:
+    --attempt N        Specific run attempt number (default: latest)
+    -o, --output DIR   Output directory (default: current dir)
+    -c, --concurrency  Max parallel downloads (default: 5)
+    --skip-artifacts   Only download raw logs, skip workflow artifacts
+    -q, --quiet        Suppress info messages, show errors only
+
+Exit codes:
+    0  all requested files downloaded successfully
+    1  one or more files failed, or the run could not be queried
+
+Output filenames:
+    {repo}_run{RUN_ID}_job{JOB_ID}_attempt{N}_{status}_{job-name}_logs.txt
+    {repo}_run{RUN_ID}_art{ARTIFACT_ID}_{artifact-name}.zip
 """
 
-import os
-import sys
-import json
-import urllib.request
-import urllib.error
-import urllib.parse
+from __future__ import annotations
+
 import argparse
+import asyncio
+import logging
+import os
+import re
+import sys
+from functools import partial
 from pathlib import Path
 
-GITHUB_API = "https://api.github.com"
+import httpx
+from ghapi.all import GhApi, paged
+
+logger = logging.getLogger(__name__)
+
+# ghapi HTTP errors subclass urllib.error.HTTPError -> OSError, transport errors
+# surface as httpx.HTTPError, and file writes raise OSError. All are treated as
+# recoverable download failures rather than bugs.
+DOWNLOAD_ERRORS = (httpx.HTTPError, OSError)
+
+DEFAULT_CONCURRENCY = 5
 
 
-def _build_opener(token):
-    """Return an opener that preserves headers across same-domain redirects only."""
-    class _PreserveAuthRedirectHandler(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
-            if urllib.parse.urlparse(req.full_url).netloc == urllib.parse.urlparse(newurl).netloc:
-                for name in ("Authorization", "Accept", "User-Agent"):
-                    if name in req.headers:
-                        new_req.add_header(name, req.headers[name])
-            else:
-                new_req.add_header("User-Agent", req.headers.get("User-Agent", "download-job-logs/1.0"))
-            return new_req
-
-    return urllib.request.build_opener(_PreserveAuthRedirectHandler())
+class Abort(Exception):
+    """Fatal, user-facing error; handled at the entry point as exit code 1."""
 
 
-def _do_request(url, token, opener):
-    req = urllib.request.Request(url)
-    req.add_header("Authorization", f"token {token}")
-    req.add_header("Accept", "application/vnd.github+json")
-    req.add_header("User-Agent", "download-job-logs/1.0")
-    return opener.open(req)
+def sanitize(name: str) -> str:
+    """Replace characters unsafe for filenames with ``_``."""
+    return re.sub(r"[^\w\-.]", "_", name)
 
 
-def api_request(url, token, opener):
-    """Make a GitHub API request, returning parsed JSON."""
-    try:
-        with _do_request(url, token, opener) as resp:
-            return json.load(resp)
-    except urllib.error.HTTPError as e:
-        body = e.read().decode(errors="replace")
-        print(f"HTTP {e.code} for {url}: {body}", file=sys.stderr)
-        sys.exit(1)
+def write_file(dest: Path, data: str | bytes) -> None:
+    """Write *data* to *dest*, creating parent directories as needed."""
+    if isinstance(data, str):
+        data = data.encode()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)
+    logger.info("  -> %s (%.1f KB)", dest, len(data) / 1024)
 
 
-def api_request_paginated(url, token, opener):
-    """Fetch all pages from a GitHub API list endpoint."""
-    results = []
-    page = 1
-    item_keys = {"items", "jobs", "artifacts", "workflow_runs", "secrets", "variables"}
-    while True:
-        paginated_url = f"{url}{'&' if '?' in url else '?'}page={page}&per_page=100"
-        data = api_request(paginated_url, token, opener)
-        if isinstance(data, list):
-            results.extend(data)
-            if len(data) < 100:
-                break
-        elif isinstance(data, dict):
-            extracted = False
-            for key in item_keys:
-                if key in data:
-                    results.extend(data[key])
-                    extracted = True
-                    if len(data[key]) < 100:
-                        return results
-                    break
-            if not extracted:
-                results.append(data)
-                break
-        else:
-            break
-        page += 1
-    return results
-
-
-def download_file(url, token, dest):
-    """Download a file, manually following cross-domain redirects without auth."""
-    class _NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, hdrs, newurl):
-            return None
-
-    no_redirect_opener = urllib.request.build_opener(_NoRedirect)
-
-    try:
-        req = urllib.request.Request(url)
-        req.add_header("Authorization", f"token {token}")
-        req.add_header("Accept", "application/vnd.github+json")
-        req.add_header("User-Agent", "download-job-logs/1.0")
-
-        try:
-            resp = no_redirect_opener.open(req)
-        except urllib.error.HTTPError as e:
-            if e.code not in (301, 302, 303, 307, 308):
-                raise
-            redirect_url = e.headers.get("Location")
-            if not redirect_url:
-                raise ValueError("Redirect with no Location header")
-        else:
-            if resp.status in (301, 302, 303, 307, 308):
-                redirect_url = resp.headers.get("Location")
-                if not redirect_url:
-                    raise ValueError("Redirect with no Location header")
-            else:
-                data = resp.read()
-                Path(dest).parent.mkdir(parents=True, exist_ok=True)
-                with open(dest, "wb") as f:
-                    f.write(data)
-                size_kb = len(data) / 1024
-                print(f"  -> {dest} ({size_kb:.1f} KB)")
-                return
-
-        req2 = urllib.request.Request(redirect_url)
-        req2.add_header("User-Agent", "download-job-logs/1.0")
-        with urllib.request.urlopen(req2) as resp2:
-            data = resp2.read()
-
-    except urllib.error.HTTPError as e:
-        body = e.read().decode(errors="replace")
-        print(f"  URL: {url}", file=sys.stderr)
-        print(f"  HTTP {e.code} - {e.reason}", file=sys.stderr)
-        print(f"  Response headers: {dict(e.headers)}", file=sys.stderr)
-        print(f"  Response body: {body}", file=sys.stderr)
-        raise
-
-    Path(dest).parent.mkdir(parents=True, exist_ok=True)
-    with open(dest, "wb") as f:
-        f.write(data)
-
-    size_kb = len(data) / 1024
-    print(f"  -> {dest} ({size_kb:.1f} KB)")
-
-
-def sanitize(name):
-    return name.replace("/", "_").replace("\\", "_").replace(" ", "_")
-
-
-def main():
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments and configure logging."""
     parser = argparse.ArgumentParser(
-        description="Download GitHub Actions run logs and artifacts"
+        description="Download GitHub Actions run logs and artifacts",
     )
     parser.add_argument("repo", help="Repository in OWNER/REPO format")
     parser.add_argument("run_id", type=int, help="GitHub Actions run ID")
-    parser.add_argument(
-        "--attempt", type=int, default=None,
-        help="Specific run attempt (default: latest)"
-    )
-    parser.add_argument(
-        "-o", "--output", default=".",
-        help="Output directory (default: current dir)"
-    )
-    parser.add_argument(
-        "--skip-artifacts", action="store_true",
-        help="Only download raw logs, skip artifacts"
-    )
+    parser.add_argument("--attempt", type=int, help="Run attempt (default: latest)")
+    parser.add_argument("-o", "--output", default=".", help="Output directory")
+    parser.add_argument("-c", "--concurrency", type=int, default=DEFAULT_CONCURRENCY,
+                        help=f"Max parallel downloads (default: {DEFAULT_CONCURRENCY})")
+    parser.add_argument("--skip-artifacts", action="store_true",
+                        help="Only download raw logs, skip artifacts")
+    parser.add_argument("-q", "--quiet", action="store_true", help="Show errors only")
     args = parser.parse_args()
+
+    if args.concurrency < 1:
+        parser.error("--concurrency must be >= 1")
+
+    logging.basicConfig(
+        level=logging.WARNING if args.quiet else logging.INFO,
+        format="%(message)s",
+        stream=sys.stdout,
+    )
+    return args
+
+
+async def list_all(oper, key: str, **kwargs) -> list:
+    """Fetch every item across all pages of an enveloped GitHub list endpoint.
+
+    These endpoints wrap results as ``{"total_count": N, "<key>": [...]}``,
+    which is never falsy, so ``paged`` is fed the inner list instead so its
+    empty-page stop condition works.
+    """
+    async def page_items(**kw):
+        return getattr(await oper(**kw), key)
+
+    items: list = []
+    async for page in paged(page_items, per_page=100, **kwargs):
+        items += page
+    return items
+
+
+async def download_all(specs: list[tuple], sem: asyncio.Semaphore) -> tuple[int, int]:
+    """Download ``(label, dest, fetch)`` specs in parallel. Returns (ok, total)."""
+    total = len(specs)
+
+    async def run(index: int, label: str, dest: Path, fetch) -> bool:
+        async with sem:
+            logger.info("[%d/%d] %s", index, total, label)
+            try:
+                write_file(dest, await fetch())
+            except DOWNLOAD_ERRORS as exc:
+                logger.error("  Failed: %s: %s", dest, exc)
+                return False
+        return True
+
+    done = await asyncio.gather(*(run(i, *s) for i, s in enumerate(specs, 1)))
+    return sum(done), total
+
+
+async def main() -> int:
+    """Download job logs and artifacts for a run. Returns a process exit code."""
+    args = parse_args()
 
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
-        print("Error: GITHUB_TOKEN environment variable not set", file=sys.stderr)
-        sys.exit(1)
+        raise Abort("GITHUB_TOKEN environment variable not set")
 
+    owner, _, name = args.repo.partition("/")
+    if not owner or not name:
+        raise Abort("repo must be in OWNER/REPO format")
+
+    slug = sanitize(args.repo)
     out_dir = Path(args.output)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    api = GhApi(owner=owner, repo=name, token=token)
+    sem = asyncio.Semaphore(args.concurrency)
 
-    repo_slug = sanitize(args.repo)
+    run = await api.actions.get_workflow_run(run_id=args.run_id)
+    attempt = args.attempt if args.attempt is not None else run.run_attempt
+    logger.info("Run: %s #%d  attempt: %d", args.repo, args.run_id, attempt)
 
-    opener = _build_opener(token)
-
-    # --- Fetch run info ---
-    run_url = f"{GITHUB_API}/repos/{args.repo}/actions/runs/{args.run_id}"
-    run_info = api_request(run_url, token, opener)
-    attempt = args.attempt or run_info.get("run_attempt", 1)
-
-    # --- Fetch jobs ---
-    if args.attempt:
-        jobs_url = f"{run_url}/attempts/{attempt}/jobs"
-    else:
-        jobs_url = f"{run_url}/jobs"
-
-    print(f"Run: {args.repo} #{args.run_id}  attempt: {attempt}")
-    print(f"Fetching jobs...")
-    jobs = api_request_paginated(jobs_url, token, opener)
-    print(f"  Found {len(jobs)} job(s)\n")
-
-    # --- Download raw logs ---
-    for job in jobs:
-        job_id = job["id"]
-        job_name = sanitize(job["name"])
-        job_status = job.get("conclusion", "unknown")
-
-        fname = (
-            f"{repo_slug}_run{args.run_id}_job{job_id}"
-            f"_attempt{attempt}_{job_status}_{job_name}_logs.txt"
+    # Note: the REST API only serves job logs for the *latest* attempt, so for
+    # older attempts the contents may not match the encoded attempt.
+    jobs = await list_all(
+        api.actions.list_jobs_for_workflow_run_attempt,
+        "jobs", run_id=args.run_id, attempt_number=attempt)
+    logger.info("Found %d job(s)", len(jobs))
+    job_specs = [
+        (
+            f"Job '{j.name}' (id={j.id}, status={j.conclusion or 'unknown'})",
+            out_dir / (f"{slug}_run{args.run_id}_job{j.id}_attempt{attempt}"
+                       f"_{j.conclusion or 'unknown'}_{sanitize(j.name)}_logs.txt"),
+            partial(api.actions.download_job_logs_for_workflow_run, job_id=j.id),
         )
+        for j in jobs
+    ]
+    log_ok, log_total = await download_all(job_specs, sem)
+    logger.info("Downloaded %d/%d job log(s)", log_ok, log_total)
 
-        log_url = f"{GITHUB_API}/repos/{args.repo}/actions/jobs/{job_id}/logs"
-
-        print(f"Job '{job['name']}' (id={job_id}, status={job_status})")
-        try:
-            download_file(log_url, token, str(out_dir / fname))
-        except urllib.error.HTTPError:
-            pass
-
+    art_ok = art_total = 0
     if args.skip_artifacts:
-        print("\nSkipping artifacts (--skip-artifacts).")
-        return
-
-    # --- Download artifacts ---
-    arts_url = f"{run_url}/artifacts"
-    print(f"\nFetching artifacts...")
-    artifacts = api_request_paginated(arts_url, token, opener)
-
-    if not artifacts:
-        print("  No artifacts found.")
+        logger.info("Skipping artifacts (--skip-artifacts).")
     else:
-        print(f"  Found {len(artifacts)} artifact(s)\n")
-        for art in artifacts:
-            art_id = art["id"]
-            art_name = sanitize(art["name"])
-            fname = (
-                f"{repo_slug}_run{args.run_id}_art{art_id}_{art_name}.zip"
+        artifacts = await list_all(
+            api.actions.list_workflow_run_artifacts,
+            "artifacts", run_id=args.run_id)
+        logger.info("Found %d artifact(s)", len(artifacts))
+        art_specs = [
+            (
+                f"Artifact '{a.name}' (id={a.id})",
+                out_dir / f"{slug}_run{args.run_id}_art{a.id}_{sanitize(a.name)}.zip",
+                partial(api.actions.download_artifact, artifact_id=a.id,
+                        archive_format="zip"),
             )
-            art_url = f"{GITHUB_API}/repos/{args.repo}/actions/artifacts/{art_id}/zip"
+            for a in artifacts
+        ]
+        art_ok, art_total = await download_all(art_specs, sem)
+        logger.info("Downloaded %d/%d artifact(s)", art_ok, art_total)
 
-            print(f"Artifact '{art['name']}' (id={art_id})")
-            try:
-                download_file(art_url, token, str(out_dir / fname))
-            except urllib.error.HTTPError:
-                pass
-
-    print("\nDone.")
+    failures = (log_total - log_ok) + (art_total - art_ok)
+    if failures:
+        logger.warning("Done with %d failure(s).", failures)
+        return 1
+    logger.info("Done.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        sys.exit(asyncio.run(main()))
+    except KeyboardInterrupt:
+        logger.error("Interrupted")
+        sys.exit(130)
+    except (Abort, *DOWNLOAD_ERRORS) as exc:
+        logger.error("Error: %s", exc)
+        sys.exit(1)
