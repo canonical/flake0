@@ -15,4 +15,4 @@ Flake0 is an open-source project that welcomes community contributions, suggesti
 
 ## Contributing
 
-See CONTRIBUTING.md for the repository structure, and further instructions.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the repository structure, and further instructions.
