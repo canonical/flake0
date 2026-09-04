@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm]
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -37,7 +37,7 @@ jobs:
         run: |
           set -x
           sudo apt-get update -qq
-          sudo apt-get install -y -qq stress-ng jq
+          sudo apt-get install -y -qq stress-ng jq python3-pytest
           mkdir -p /tmp/demo-tests
           cat > /tmp/demo-tests/test_demo.py <<'EOF'
           import time
@@ -208,13 +208,13 @@ jobs:
           key: flake0-telegraf-1.39.2-${{ runner.os }}-${{ runner.arch }}
 
       - name: Start with metacharacters in every tag value
-        env:
-          TELEGRAF_HOME: ${{ runner.temp }}/flake0-telegraf
-          GITHUB_WORKFLOW: 'build | test & deploy'
-          GITHUB_JOB: 'he said "hi"'
-          GITHUB_REF_NAME: 'back\slash'
-          RUNNER_NAME: 'dollar $HOME ${NOPE}'
-        run: ./.github/actions/collect/scripts/start.sh
+        run: |
+          export TELEGRAF_HOME="${{ runner.temp }}/flake0-telegraf"
+          export GITHUB_WORKFLOW='build | test & deploy'
+          export GITHUB_JOB='he said "hi"'
+          export GITHUB_REF_NAME='back\slash'
+          export RUNNER_NAME='dollar $HOME ${NOPE}'
+          ./.github/actions/collect/scripts/start.sh
 
       - name: Stop
         if: always()
