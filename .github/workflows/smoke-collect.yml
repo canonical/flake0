@@ -1,0 +1,235 @@
+name: smoke-collect
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: shellcheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: shellcheck
+        run: shellcheck -S style .github/actions/collect/scripts/*.sh
+
+  smoke:
+    name: smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Start collection
+        id: collect
+        uses: ./.github/actions/collect
+        with:
+          phase: start
+
+      - name: Generate load and run a failing test suite
+        run: |
+          set -x
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq stress-ng jq
+          mkdir -p /tmp/demo-tests
+          cat > /tmp/demo-tests/test_demo.py <<'EOF'
+          import time
+
+          def test_pass():
+              # long enough for the 30s-tier procstat to sample the test process
+              time.sleep(45)
+
+          def test_fail():
+              time.sleep(1)
+              assert False, "intentional failure for collect smoke"
+          EOF
+          # >90s of collection so the 30s-tier inputs (procstat, processes) yield
+          # several samples — the overhead assertions below need a delta.
+          stress-ng --cpu "$(nproc)" --vm 1 --vm-bytes 1G --timeout 90s --metrics-brief &
+          STRESS_PID=$!
+          python3 -m pytest /tmp/demo-tests || true
+          wait $STRESS_PID || true
+
+      - name: Stop collection
+        id: stop
+        uses: ./.github/actions/collect
+        if: always()
+        with:
+          phase: stop
+
+      - name: Assert bundle contents
+        run: |
+          set -euxo pipefail
+          test -n "${{ steps.stop.outputs.bundle-path }}"
+          mkdir -p /tmp/bundle
+          tar -xf "${{ steps.stop.outputs.bundle-path }}" -C /tmp/bundle
+          test -s /tmp/bundle/metrics.json
+          M=/tmp/bundle/metrics.json
+
+          # Every line is one flush batch: {"metrics": [...]}.
+          # `jq -ne 'all(inputs; ...)'` streams every line and yields one verdict.
+          # Plain `jq -e '<cond>' file` would NOT do: with multiple inputs its exit
+          # status reflects only the last line, so a bad batch in the middle passes.
+          jq -ne 'all(inputs; .metrics|type=="array" and length>0)' "$M"
+
+          # all expected measurements are present
+          jq -r '.metrics[].name' "$M" | sort -u > /tmp/measurements.txt
+          cat /tmp/measurements.txt
+          for m in cpu mem swap system disk diskio net netstat nstat \
+                   pressure processes kernel linux_sysctl_fs internal_write; do
+            grep -qx "$m" /tmp/measurements.txt
+          done
+
+          # procstat saw the collector itself and the test process. python3 is the
+          # executable name for `python3 -m pytest`; the pattern matched it on argv.
+          jq -r '.metrics[]|select(.name=="procstat").tags.process_name' "$M" | sort -u > /tmp/procnames.txt
+          cat /tmp/procnames.txt
+          grep -qx telegraf /tmp/procnames.txt
+          grep -qxE 'python3|pytest' /tmp/procnames.txt
+
+          # run-correlation tags are on every metric, not just the first
+          jq -ne 'all(inputs; all(.metrics[]; .tags.run_id == env.GITHUB_RUN_ID))' "$M"
+
+          # no gather/write errors anywhere in the run
+          if jq -ne 'any(inputs; any(.metrics[];
+                       (.name=="internal_gather" or .name=="internal_write")
+                       and ((.fields.errors // 0) > 0
+                            or (.fields.metrics_dropped // 0) > 0
+                            or (.fields.write_errors // 0) > 0)))' "$M"; then
+            echo "::error::collector reported gather/write errors"
+            exit 1
+          fi
+
+      - name: Assert no command lines were captured
+        run: |
+          set -euxo pipefail
+          # procstat records cmdline by default, which would publish any secret
+          # passed in argv into this artifact. telegraf.conf drops it; keep it dropped.
+          jq -ne 'all(inputs; all(.metrics[];
+                    .name != "procstat" or (.fields|has("cmdline")|not)))' \
+            /tmp/bundle/metrics.json
+
+      - name: Assert collector overhead is within budget
+        run: |
+          set -euo pipefail
+          M=/tmp/bundle/metrics.json
+
+          # Cost attribution per input, from the collector's own instrumentation.
+          # Informational, but this is the table to read when overhead regresses:
+          # a plugin's share of one core is gather_time / its interval.
+          echo "--- mean gather time per input ---"
+          jq -r '.metrics[]|select(.name=="internal_gather")|"\(.tags.input) \(.fields.gather_time_ns)"' "$M" \
+            | awk '{s[$1]+=$2; n[$1]++} END {for (i in s) printf "%-20s %8.1f ms\n", i, s[i]/n[i]/1e6}' \
+            | sort -k2 -rn
+
+          # CPU: measured on the telegraf process itself. cpu_time_* are cumulative
+          # seconds and timestamps are ms, so CPU% comes from the delta across the
+          # run, not from any single sample.
+          jq -r '.metrics[]|select(.name=="procstat" and .tags.process_name=="telegraf")
+                 |[.timestamp,(.fields.cpu_time_user + .fields.cpu_time_system),.fields.memory_rss]|@tsv' \
+            "$M" | sort -n > /tmp/tg.tsv
+          cat /tmp/tg.tsv
+          awk -v max_cpu=10 -v max_rss_mb=300 '
+            NR==1 {t0=$1; c0=$2}
+            {t1=$1; c1=$2; if ($3>rss) rss=$3; n++}
+            END {
+              if (n < 2) { print "FAIL: need >=2 telegraf procstat samples, got " n; exit 1 }
+              wall=(t1-t0)/1000
+              cpu=(c1-c0)/wall*100
+              printf "collector CPU:   %.2f%% of one core over %.0fs\n", cpu, wall
+              printf "machine share:   %.3f%% of total CPU (%d cores)\n", cpu/ncpu, ncpu
+              printf "process VmRSS:   %.1f MB peak\n", rss/1048576
+              bad=0
+              if (cpu > max_cpu)            { printf "FAIL: CPU %.2f%% > %s%%\n", cpu, max_cpu; bad=1 }
+              if (rss/1048576 > max_rss_mb) { printf "FAIL: VmRSS %.1f MB > %s MB\n", rss/1048576, max_rss_mb; bad=1 }
+              exit bad
+            }' ncpu="$(nproc)" /tmp/tg.tsv
+
+          # Memory: gate on Go's own accounting, not VmRSS. Telegraf ships as a
+          # ~293 MB static binary, so VmRSS counts its resident text pages — those
+          # are file/page-cache backed and shared, not memory pressure on the job.
+          # (Measured on a dev host: VmRSS 171 MB but RssAnon only 44 MB.)
+          # Not alloc_bytes either: that is Go live-heap and reads several times
+          # below the real footprint, so it cannot show whether the budget is met.
+          jq -r '.metrics[]|select(.name=="internal_memstats")|.fields.sys_bytes' "$M" \
+            | awk -v max_mb=150 '{if ($1>m) m=$1; n++} END {
+                if (n < 1) { print "FAIL: no internal_memstats samples"; exit 1 }
+                printf "go runtime:      %.1f MB peak (sys_bytes)\n", m/1048576
+                if (m/1048576 > max_mb) { printf "FAIL: sys_bytes %.1f MB > %s MB\n", m/1048576, max_mb; exit 1 }
+              }'
+
+      - name: Assert the collector was actually stopped
+        run: |
+          set -euo pipefail
+          # Regression test. Telegraf writes its pidfile 0640; under sudo that is
+          # root-owned and unreadable by the runner user, so `stop` had no pid to
+          # signal and left a root-owned collector running past the job. Every
+          # other assertion still passed, because the data itself was fine.
+          if pgrep -af 'telegraf --config' ; then
+            echo "::error::collector still running after stop"
+            exit 1
+          fi
+          echo "no telegraf process remains"
+
+      - name: Report bundle volume
+        run: |
+          set -euo pipefail
+          RAW=$(stat -c%s /tmp/bundle/metrics.json)
+          PACKED=$(stat -c%s "${{ steps.stop.outputs.bundle-path }}")
+          # streamed min/max rather than `jq -s`, which would hold the whole file
+          SPAN=$(jq -r '.metrics[].timestamp' /tmp/bundle/metrics.json \
+                 | awk 'NR==1{lo=$1;hi=$1} {if($1<lo)lo=$1; if($1>hi)hi=$1} END{print (hi-lo)/1000}')
+          awk -v raw="$RAW" -v packed="$PACKED" -v span="$SPAN" 'BEGIN {
+            if (span <= 0) { print "could not determine time span"; exit 0 }
+            printf "metrics.json: %.1f MB over %.0fs => %.1f MB/30min uncompressed\n", raw/1048576, span, raw/1048576/span*1800
+            printf "bundle:       %.2f MB (%.0fx smaller)\n", packed/1048576, raw/packed
+          }'
+
+  hostile-tags:
+    # Regression test: tag values are passed to Telegraf through the environment
+    # and expanded by Telegraf itself. An earlier version substituted them into
+    # the config with `sed 's|${VAR}|value|'`, which failed the job outright for
+    # any workflow whose name contained a '|'.
+    name: hostile tag values
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/flake0-telegraf
+          key: flake0-telegraf-1.39.2-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Start with metacharacters in every tag value
+        env:
+          TELEGRAF_HOME: ${{ runner.temp }}/flake0-telegraf
+          GITHUB_WORKFLOW: 'build | test & deploy'
+          GITHUB_JOB: 'he said "hi"'
+          GITHUB_REF_NAME: 'back\slash'
+          RUNNER_NAME: 'dollar $HOME ${NOPE}'
+        run: ./.github/actions/collect/scripts/start.sh
+
+      - name: Stop
+        if: always()
+        run: ./.github/actions/collect/scripts/stop.sh
+
+      - name: Assert values round-tripped verbatim
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hb && tar -xf "${RUNNER_TEMP}/flake0-bundle.tar.zst" -C /tmp/hb
+          M=/tmp/hb/metrics.json
+          jq -r '.metrics[0].tags|[.workflow,.job,.ref,.runner_name]|@tsv' "$M" | head -1
+          # checked on every metric of every batch, not just the first
+          jq -ne 'all(inputs; all(.metrics[];
+                       .tags.workflow    == "build | test & deploy"
+                   and .tags.job         == "he said \"hi\""
+                   and .tags.ref         == "back\\slash"
+                   and .tags.runner_name == "dollar $HOME ${NOPE}"))' "$M"
+          echo "all hostile tag values preserved"

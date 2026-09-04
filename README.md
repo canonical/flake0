@@ -7,6 +7,28 @@ all of which could lead to "test flakyness" or "real failures".
 
 The design of the project is currently still in draft, and the implementation a work-in-progress.
 
+## Host Telemetry Collection
+
+Flake0 provides a host telemetry collection GitHub Action (`.github/actions/collect`) to record runner health (PSI, CPU, memory, disk, block I/O, network) during CI test runs and upload evidence bundles for post-mortem analysis:
+
+```yaml
+- name: Start collection
+  uses: canonical/flake0/.github/actions/collect@main
+  with:
+    phase: start
+
+- name: Run integration tests
+  run: pytest tests/integration
+
+- name: Stop collection
+  uses: canonical/flake0/.github/actions/collect@main
+  if: always()
+  with:
+    phase: stop
+```
+
+See [`.github/actions/collect/README.md`](.github/actions/collect/README.md) for details on inputs, outputs, overhead, and configuration.
+
 ## Community and support
 
 Flake0 is an open-source project that welcomes community contributions, suggestions, fixes and constructive feedback.

@@ -3,7 +3,7 @@
 The current repository structure is a draft and should evolve over the lifetime of the project.
 
 Please add:
-- Github workflow automation to `.github/`
+- Github workflow automation and actions to `.github/` (e.g. `.github/actions/collect`)
 - Documentation or instructions for agentic engineering (`*.md`) to `docs/`
 - scripts or simple tools for specific tasks to `scripts/`
 - agentic skills that we use or develop to `skills/`
