@@ -37,7 +37,7 @@ runs:
       env:
         PYTHON_BIN: "/usr/bin/python3"
       run: |
-        "$PYTHON_BIN" -m pip install -r "$GITHUB_ACTION_PATH/scripts/requirements.txt"
+        PIP_BREAK_SYSTEM_PACKAGES=true "$PYTHON_BIN" -m pip install -r "$GITHUB_ACTION_PATH/scripts/requirements.txt"
 
     - name: Render dashboard
       id: run
