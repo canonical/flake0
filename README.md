@@ -29,6 +29,20 @@ Flake0 provides a host telemetry collection GitHub Action (`.github/actions/coll
 
 See [`.github/actions/collect/README.md`](.github/actions/collect/README.md) for details on inputs, outputs, overhead, and configuration.
 
+Flake0 also provides a `plot` action (`.github/actions/plot`) that renders a runner-health
+dashboard PNG straight from a `collect` bundle, with zero configuration:
+
+```yaml
+- name: Render dashboard
+  if: always()
+  uses: canonical/flake0/.github/actions/plot@main
+  with:
+    bundle-path: ${{ steps.collect.outputs.bundle-path }}
+    artifact-name: flake0-plot-${{ github.run_id }}
+```
+
+See [`.github/actions/plot/README.md`](.github/actions/plot/README.md) for details.
+
 ## Community and support
 
 Flake0 is an open-source project that welcomes community contributions, suggestions, fixes and constructive feedback.

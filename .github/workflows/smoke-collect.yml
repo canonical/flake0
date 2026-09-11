@@ -10,12 +10,31 @@ permissions:
 
 jobs:
   lint:
-    name: shellcheck
+    name: lint
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
       - name: shellcheck
-        run: shellcheck -S style .github/actions/collect/scripts/*.sh
+        run: shellcheck -S style .github/actions/collect/scripts/*.sh .github/actions/plot/scripts/*.sh
+
+      # Pinned for version-determinism with the plot action's own runtime
+      # interpreter -- not because Ubuntu 24.04's system Python is PEP
+      # 668-blocked, it isn't (this image disables that enforcement).
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Install plot's Python dependencies
+        run: |
+          pip install ruff==0.16.7 pytest==9.1.1 -r .github/actions/plot/scripts/requirements.txt
+
+      - name: ruff
+        run: ruff check .github/actions/plot/scripts/plot_telemetry.py
+
+      - name: pytest
+        run: python3 -m pytest tests/
 
   smoke:
     name: smoke (${{ matrix.os }})
@@ -106,6 +125,25 @@ jobs:
             echo "::error::collector reported gather/write errors"
             exit 1
           fi
+
+      - name: Render dashboard
+        id: plot
+        if: always()
+        uses: ./.github/actions/plot
+        with:
+          bundle-path: ${{ steps.stop.outputs.bundle-path }}
+          artifact-name: flake0-plot-${{ matrix.os }}-${{ github.run_id }}
+
+      - name: Assert dashboard was produced
+        if: always()
+        run: |
+          set -euxo pipefail
+          test -n "${{ steps.plot.outputs.health-png }}"
+          test -s "${{ steps.plot.outputs.health-png }}"
+          file "${{ steps.plot.outputs.health-png }}" | grep -qi 'PNG image'
+          SIZE=$(stat -c%s "${{ steps.plot.outputs.health-png }}")
+          echo "health.png: $SIZE bytes"
+          [ "$SIZE" -gt 20000 ]
 
       - name: Assert no command lines were captured
         run: |
