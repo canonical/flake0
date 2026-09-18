@@ -1,0 +1,58 @@
+name: plot
+description: >-
+  Renders a runner-health dashboard PNG from a flake0 collect bundle's
+  metrics.json. Zero configuration. Part of the Flake0 AI debugging suite.
+author: canonical
+branding:
+  icon: bar-chart-2
+  color: orange
+
+inputs:
+  bundle-path:
+    description: "Path to a collect bundle archive (tar.zst or tar.gz)"
+    required: true
+  artifact-name:
+    description: "Name of the uploaded dashboard artifact (empty: don't upload)"
+    required: false
+    default: ""
+  retention-days:
+    description: "Artifact retention in days"
+    required: false
+    default: "14"
+
+outputs:
+  health-png:
+    description: "Path to the rendered dashboard PNG (empty if none was produced)"
+    value: ${{ steps.run.outputs.health-png }}
+
+runs:
+  using: composite
+  steps:
+    # update-environment: false above means later steps in the CALLER's job
+    # never see this interpreter on PATH, so it's passed explicitly via env.
+    - name: Install dependencies
+      if: always()
+      shell: bash
+      continue-on-error: true
+      env:
+        PYTHON_BIN: "/usr/bin/python3"
+      run: |
+        PIP_BREAK_SYSTEM_PACKAGES=true "$PYTHON_BIN" -m pip install -r "$GITHUB_ACTION_PATH/scripts/requirements.txt"
+
+    - name: Render dashboard
+      id: run
+      if: always()
+      shell: bash
+      env:
+        BUNDLE_PATH: ${{ inputs.bundle-path }}
+        PYTHON_BIN: ${{ steps.setup-python.outputs.python-path }}
+      run: "$GITHUB_ACTION_PATH/scripts/run.sh"
+
+    - name: Upload dashboard
+      if: ${{ always() && inputs.artifact-name != '' && steps.run.outputs.health-png != '' }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.run.outputs.health-png }}
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: warn
