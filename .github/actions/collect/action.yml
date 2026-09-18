@@ -1,0 +1,130 @@
+name: collect
+description: >-
+  Lightweight host telemetry for CI runners. Part of the Flake0 AI debugging suite.
+  'start' begins Telegraf host metrics collection (2s interval); 'stop' flushes,
+  bundles and uploads a workflow artifact for post-mortem analysis of failing/flaky tests.
+author: canonical
+branding:
+  icon: activity
+  color: orange
+
+inputs:
+  phase:
+    description: "'start' to begin collection, 'stop' to end it and upload the artifact"
+    required: true
+  telegraf-version:
+    description: >-
+      Telegraf version to install. The default is pinned to a hash committed in
+      this repo; any other value can only be checked against upstream's own
+      published digest.
+    required: false
+    default: "1.39.2"
+  artifact-name:
+    description: >-
+      Name of the uploaded artifact. The default is unique per run and job, but
+      NOT per matrix entry — upload-artifact@v4 fails on duplicate names, so
+      matrix jobs must pass an explicit name including the matrix identity.
+    required: false
+    default: ""
+  retention-days:
+    description: "Artifact retention in days"
+    required: false
+    default: "14"
+  collect-dir:
+    description: "Collection directory (default: $RUNNER_TEMP/flake0-collect)"
+    required: false
+    default: ""
+  extra-config:
+    description: >-
+      Path to a Telegraf config fragment appended to the bundled telegraf.conf,
+      for watching a workload this action does not know about (e.g. an extra
+      [[inputs.procstat]] block). Rejected by the --test gate if malformed.
+    required: false
+    default: ""
+  cache-telegraf:
+    description: >-
+      Cache the Telegraf binary between jobs. Avoids an ~82 MB download from
+      dl.influxdata.com on every run, removing an external dependency from the
+      critical path.
+    required: false
+    default: "true"
+
+outputs:
+  bundle-path:
+    description: "Path to the collect bundle written by the 'stop' phase (empty if none)"
+    value: ${{ steps.stop.outputs.bundle-path }}
+  artifact-name:
+    description: "Name of the uploaded artifact"
+    value: ${{ steps.resolve.outputs.artifact-name }}
+
+runs:
+  using: composite
+  steps:
+    # inputs.phase is interpolated via env, not into the script body: `run:`
+    # templating would evaluate a caller-supplied value as shell.
+    - name: Validate phase
+      if: always()
+      shell: bash
+      env:
+        PHASE: ${{ inputs.phase }}
+      run: |
+        if [ "$PHASE" != "start" ] && [ "$PHASE" != "stop" ]; then
+          echo "::error::collect: unknown phase '$PHASE' (want 'start' or 'stop')"
+          exit 1
+        fi
+
+    - name: Resolve artifact name
+      id: resolve
+      if: always()
+      shell: bash
+      env:
+        ARTIFACT_NAME_INPUT: ${{ inputs.artifact-name }}
+        DEFAULT_NAME: ${{ format('flake0-collect-{0}-{1}-{2}', github.run_id, github.run_attempt, github.job) }}
+        NAME_FILE: ${{ runner.temp }}/.flake0-collect-artifact-name
+      run: |
+        if [ -n "$ARTIFACT_NAME_INPUT" ]; then
+          RESOLVED="$ARTIFACT_NAME_INPUT"
+          echo "$RESOLVED" > "$NAME_FILE"
+        elif [ -s "$NAME_FILE" ]; then
+          RESOLVED="$(cat "$NAME_FILE")"
+        else
+          RESOLVED="$DEFAULT_NAME"
+        fi
+        echo "artifact-name=$RESOLVED" >> "$GITHUB_OUTPUT"
+
+    - name: Restore cached Telegraf
+      if: ${{ inputs.phase == 'start' && inputs.cache-telegraf == 'true' }}
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ${{ runner.temp }}/flake0-telegraf
+        key: flake0-telegraf-${{ inputs.telegraf-version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Start collect
+      if: ${{ inputs.phase == 'start' }}
+      shell: bash
+      env:
+        TELEGRAF_VERSION: ${{ inputs.telegraf-version }}
+        FLAKE0_COLLECT_DIR: ${{ inputs.collect-dir }}
+        TELEGRAF_HOME: ${{ runner.temp }}/flake0-telegraf
+        FLAKE0_EXTRA_CONFIG: ${{ inputs.extra-config }}
+      run: "$GITHUB_ACTION_PATH/scripts/start.sh"
+
+    - name: Stop collect
+      id: stop
+      if: ${{ always() && inputs.phase == 'stop' }}
+      shell: bash
+      env:
+        FLAKE0_COLLECT_DIR: ${{ inputs.collect-dir }}
+        BUNDLE_PATH: ${{ runner.temp }}/flake0-bundle.tar.zst
+      run: "$GITHUB_ACTION_PATH/scripts/stop.sh"
+
+    # Path comes from the stop step rather than being restated here: the bundle
+    # extension changes when zstd is unavailable.
+    - name: Upload collect bundle
+      if: ${{ always() && inputs.phase == 'stop' && steps.stop.outputs.bundle-path != '' }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: ${{ steps.resolve.outputs.artifact-name }}
+        path: ${{ steps.stop.outputs.bundle-path }}
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: warn
