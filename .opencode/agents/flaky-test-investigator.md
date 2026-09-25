@@ -49,11 +49,17 @@ Input: a GitHub Actions URL (run, job, or failed step) of a failing integration 
 
 ## Report
 
+Classify using the taxonomy in `docs/taxonomy.md` (source of truth for all
+values). Report verdict and root cause as **independent** fields — do not
+collapse them. A `FLAKY` verdict with `code_regression` root cause is still
+a real bug (recommend `block_merge`), not something to dismiss.
+
 Return a single report with:
 
-- **Verdict**: FLAKY / NOT FLAKY / INCONCLUSIVE
-- **Root cause category**: code / test / environment / other, with a one-line explanation
-- **Evidence**: the concrete signals supporting the verdict (log excerpts, run history, diff analysis)
-- **Confidence**: high / medium / low
+- **Verdict**: `REAL_FAILURE` / `FLAKY` / `INCONCLUSIVE`
+- **Root cause category**: `code_regression` / `code_preexisting` / `test_defect` / `workload_defect` / `environment_infra` / `dependency_drift` / `external_service` / `unknown`, with a one-line explanation
+- **Confidence**: a percentage (0-100) plus its bucket (`high`/`medium`/`low`), computed from evidence completeness per the formula in `docs/taxonomy.md` — e.g. `65% (medium)`. Do not report a percentage that isn't traceable to which signals were present, missing, or contradictory.
+- **Recommendation**: derived from the (verdict, root cause) combination table in `docs/taxonomy.md` — `block_merge` / `open_issue` / `fix_test` / `quarantine_test` / `retry_safe` / `escalate_infra` / `needs_human_review`
+- **Evidence**: the concrete signals supporting the verdict and root cause (log excerpts, run history, diff analysis)
 
-Be evidence-driven: if the signals are insufficient, report INCONCLUSIVE and list what additional data (e.g., a re-run, node metrics) would settle it. Do not modify any files.
+Be evidence-driven: if the signals are insufficient, report `INCONCLUSIVE` / `unknown` / `needs_human_review` and list what additional data (e.g., a re-run, node metrics) would settle it. Do not modify any files.

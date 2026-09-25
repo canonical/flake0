@@ -16,6 +16,7 @@ Flake0 detects flakiness by using as inputs the following items categorized by:
     - Prometheus exporter metrics.
 
 The output would be for each integration test saying if this is a flaky integration test or not.
+Classification uses the taxonomy defined in `docs/taxonomy.md` (source of truth for verdict, root cause, confidence, and recommendation values) — see `skills/integration-test-diagnosis/SKILL.md` for the procedure.
 
 ## Project Structure
 The project is structured as follows:
