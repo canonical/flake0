@@ -1,0 +1,109 @@
+name: consumer-sim
+
+# Copies the integration CI of flake0's first consumers, valkey-operator and
+# opensearch-single-kernel-library, on their runner images. Spread runs the
+# task as root, and each consumer's prepare bootstraps Juju after collection
+# starts. See docs/phase1-juju-logs.md.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lifecycle:
+    name: ${{ matrix.consumer }} ${{ matrix.substrate }} (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {consumer: valkey, substrate: lxd, runner: ubuntu-26.04}
+          - {consumer: valkey, substrate: lxd, runner: ubuntu-26.04-arm}
+          - {consumer: valkey, substrate: k8s, runner: ubuntu-26.04}
+          - {consumer: valkey, substrate: k8s, runner: ubuntu-26.04-arm}
+          # closest GitHub image to OpenSearch's self-hosted noble runners
+          - {consumer: opensearch, substrate: lxd, runner: ubuntu-24.04}
+          - {consumer: opensearch, substrate: k8s, runner: ubuntu-24.04}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Start collection
+        uses: ./.github/actions/collect
+        with:
+          phase: start
+          artifact-name: flake0-sim-${{ matrix.consumer }}-${{ matrix.substrate }}-${{ matrix.runner }}
+
+      # valkey's step. OpenSearch's IS runners ship no Docker, so its jobs need
+      # the same cleanup here.
+      - name: Purge Docker and podman CNI
+        run: |
+          sudo apt-get remove --purge -y docker-ce docker-ce-cli containerd.io docker.io containerd 2>/dev/null || true
+          sudo nft flush ruleset
+          sudo ip link delete docker0 2>/dev/null || true
+          sudo rm -f /etc/cni/net.d/87-podman-bridge.conflist
+
+      - name: Configure sysctl
+        if: matrix.consumer == 'opensearch'
+        run: |
+          sudo tee -a /etc/sysctl.conf > /dev/null <<EOT
+          vm.max_map_count=262144
+          vm.swappiness=0
+          net.ipv4.tcp_retries2=5
+          fs.file-max=1048576
+          EOT
+          sudo sysctl -p
+
+      - name: Install spread
+        run: |
+          sudo snap install go --classic
+          go install github.com/canonical/spread/cmd/spread@latest
+
+      - name: Run spread job
+        id: spread
+        timeout-minutes: 45
+        env:
+          SPREAD_JOB: github-ci:${{ matrix.runner }}:tests/spread/lifecycle:${{ matrix.consumer }}_${{ matrix.substrate }}
+        run: ~/go/bin/spread -vv "$SPREAD_JOB"
+
+      # Both consumers run this before anything else can stop, so it overlaps
+      # with the watcher as it would in their CI.
+      - name: Consumer post-mortem
+        if: ${{ success() || (failure() && steps.spread.outcome == 'failure') }}
+        timeout-minutes: 7
+        continue-on-error: true
+        run: |
+          sudo juju switch testing
+          mkdir -p ~/logs
+          sudo juju status --color --relations | tee ~/logs/juju-status.txt > /dev/null
+          sudo juju debug-log --color --replay --no-tail | tee ~/logs/juju-debug-log.txt > /dev/null
+          script -q -c 'sudo jhack tail --printer raw --replay --no-watch' /dev/null > ~/logs/jhack-tail.txt || true
+          ls -l ~/logs
+
+      - name: Stop collection
+        id: stop
+        if: always()
+        uses: ./.github/actions/collect
+        with:
+          phase: stop
+
+      - name: Check bundle
+        env:
+          BUNDLE: ${{ steps.stop.outputs.bundle-path }}
+          CTL: concierge-${{ matrix.substrate }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/bundle"
+          tar -xf "$BUNDLE" -C "$RUNNER_TEMP/bundle"
+          ls -l "$RUNNER_TEMP/bundle"
+          tests/spread/lifecycle/check.sh "$RUNNER_TEMP/bundle" "$CTL"
+
+      - name: Assert the watcher was stopped
+        run: |
+          if pgrep -af 'juju-watch[.]sh|debug-log (--replay )?--tail --date --utc --ms -m '; then
+            echo "::error::juju log watcher still running after stop"
+            exit 1
+          fi
