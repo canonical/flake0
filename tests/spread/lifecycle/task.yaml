@@ -20,7 +20,8 @@ execute: |
   }
 
   # valkey is the lightest Data Platform database that has one charm for machines and K8s
-  juju deploy -m "$CTL:testing" valkey --channel 9/edge --trust
+  # 9/edge still has stale ubuntu@24.04 revisions, Juju's default base
+  juju deploy -m "$CTL:testing" valkey --channel 9/edge --base ubuntu@26.04 --trust
   juju wait-for application valkey -m "$CTL:testing" --query='status=="active"' --timeout 20m
   wait_follower "$CTL:testing"
 

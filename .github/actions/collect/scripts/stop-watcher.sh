@@ -9,10 +9,13 @@ DIR="${1:?usage: stop-watcher.sh <collect-dir>}"
 SUDO=()
 if sudo -n true 2> /dev/null; then SUDO=(sudo -n); fi
 
+# Prints $1 and its descendants. It stops each process before listing its
+# children, so no follower can start between this walk and the kill.
 tree() {
   local child
+  "${SUDO[@]}" kill -STOP "$1" 2> /dev/null
+  echo "$1"
   for child in $(pgrep -P "$1"); do
-    echo "$child"
     tree "$child"
   done
 }
@@ -24,11 +27,13 @@ for watcher in watcher:juju-watch.sh workload-watcher:workload-watch.sh; do
   rm -f "$DIR/${watcher%%:*}.pid"
   # a stale pid may belong to another process by now
   grep -qs "${watcher#*:}" "/proc/$PID/cmdline" || continue
-  mapfile -t -O "${#PIDS[@]}" PIDS < <(echo "$PID"; tree "$PID")
+  mapfile -t -O "${#PIDS[@]}" PIDS < <(tree "$PID")
 done
 [ ${#PIDS[@]} -gt 0 ] || exit 0
 
+# A stopped process acts on TERM only once it continues.
 "${SUDO[@]}" kill -TERM "${PIDS[@]}" 2> /dev/null
+"${SUDO[@]}" kill -CONT "${PIDS[@]}" 2> /dev/null
 sleep 2
 "${SUDO[@]}" kill -KILL "${PIDS[@]}" 2> /dev/null
 exit 0
