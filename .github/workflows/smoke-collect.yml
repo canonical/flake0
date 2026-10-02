@@ -2,6 +2,7 @@ name: smoke-collect
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -31,7 +32,7 @@ jobs:
           pip install ruff==0.16.7 pytest==9.1.1 -r .github/actions/plot/scripts/requirements.txt
 
       - name: ruff
-        run: ruff check .github/actions/plot/scripts/plot_telemetry.py tests/test_juju_watch.py
+        run: ruff check .github/actions/plot/scripts/plot_telemetry.py tests/test_juju_watch.py tests/test_workload_watch.py tests/fakes/lxc
 
       - name: pytest
         run: python3 -m pytest tests/
@@ -116,11 +117,11 @@ jobs:
           # run-correlation tags are on every metric, not just the first
           jq -ne 'all(inputs; all(.metrics[]; .tags.run_id == env.GITHUB_RUN_ID))' "$M"
 
-          # This runner has no Juju, so the log watcher must leave nothing in the
-          # bundle. consumer-sim.yml tests Juju itself.
-          LEFTOVERS=$(find /tmp/bundle -maxdepth 1 \( -name 'juju-*' -o -name 'watcher.log' -o -name 'watcher.pid' \) -print)
+          # This runner has no Juju, LXD containers or pods, so the log watchers
+          # must leave nothing in the bundle. consumer-sim.yml tests them.
+          LEFTOVERS=$(find /tmp/bundle -maxdepth 1 \( -name 'juju-*' -o -name 'watcher.*' -o -name 'workload*' \) -print)
           if [ -n "$LEFTOVERS" ]; then
-            echo "::error::juju log watcher wrote files on a runner without Juju: $LEFTOVERS"
+            echo "::error::a log watcher wrote files on a runner without workloads: $LEFTOVERS"
             exit 1
           fi
 
