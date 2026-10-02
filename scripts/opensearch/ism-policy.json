@@ -1,0 +1,38 @@
+{
+  "policy": {
+    "description": "Rollover and retention policy for the flake0-classifications index",
+    "default_state": "hot",
+    "states": [
+      {
+        "name": "hot",
+        "actions": [
+          {
+            "rollover": {
+              "min_index_age": "30d",
+              "min_doc_count": 50000
+            }
+          }
+        ],
+        "transitions": [
+          {
+            "state_name": "delete",
+            "conditions": {
+              "min_index_age": "180d"
+            }
+          }
+        ]
+      },
+      {
+        "name": "delete",
+        "actions": [
+          { "delete": {} }
+        ],
+        "transitions": []
+      }
+    ],
+    "ism_template": {
+      "index_patterns": ["flake0-classifications-*"],
+      "priority": 100
+    }
+  }
+}
