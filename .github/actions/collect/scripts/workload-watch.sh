@@ -50,7 +50,8 @@ follow_pods() {
   local link key
   for link in "$CONTAINERS_DIR"/*.log; do
     key="k8s:${link##*/}"
-    [ -L "$link" ] && [ -z "${FOLLOWER[$key]:-}" ] || continue
+    [ -L "$link" ] || continue
+    [ -z "${FOLLOWER[$key]:-}" ] || continue
     follow "$key" "$COLLECT_DIR/workload/k8s/${link##*/}" tail -n +1 -F "$(readlink "$link")"
   done
   for key in "${!FOLLOWER[@]}"; do
