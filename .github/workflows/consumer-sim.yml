@@ -3,7 +3,7 @@ name: consumer-sim
 # Copies the integration CI of flake0's first consumers, valkey-operator and
 # opensearch-single-kernel-library, on their runner images. Spread runs the
 # task as root, and each consumer's prepare bootstraps Juju after collection
-# starts. See docs/phase1-juju-logs.md.
+# starts.
 
 on:
   push:
@@ -102,6 +102,7 @@ jobs:
           tests/spread/lifecycle/check.sh "$RUNNER_TEMP/bundle" "$CTL"
 
       - name: Assert the watchers were stopped
+        if: ${{ !cancelled() }}
         run: |
           if pgrep -af 'juju-watch[.]sh|debug-log (--replay )?--tail --date --utc --ms -m |workload-watch[.]sh|tail -n [+]1 -F|journalctl --utc --no-tail -f'; then
             echo "::error::a log watcher or follower is still running after stop"

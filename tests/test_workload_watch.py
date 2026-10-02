@@ -1,7 +1,7 @@
 """Tests for .github/actions/collect/scripts/workload-watch.sh and its part of stop-watcher.sh.
 
-They run the watcher against fake LXD monitor processes, tests/fakes/lxc, tests/fakes/sudo, a
-fake /var/log/containers and a fake /proc, with short intervals. consumer-sim.yml tests it
+They run the watcher against fake LXD monitor processes, tests/fakes/lxc, a fake
+/var/log/containers and a fake /proc, with short intervals. consumer-sim.yml tests it
 against real LXD and Canonical K8s.
 """
 
@@ -115,12 +115,11 @@ class Watch:
 
     # --- watcher -------------------------------------------------------------------
 
-    def start(self, sudo=True, **knobs):
+    def start(self, **knobs):
         env = {
             "PATH": "/usr/bin:/bin",
             "FAKE_LXC_DIR": str(self.lxc),
             "FLAKE0_WATCH_INTERVAL": "0.2",
-            "FLAKE0_WATCH_SUDO": str(FAKES / "sudo") if sudo else "false",
             "FLAKE0_WATCH_LXC": str(FAKES / "lxc"),
             "FLAKE0_WATCH_LXD_DIR": str(self.lxd),
             "FLAKE0_WATCH_CONTAINERS_DIR": str(self.links),
@@ -134,8 +133,7 @@ class Watch:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        if sudo:
-            assert wait_for(lambda: (self.collect / "workload-watcher.pid").exists())
+        assert wait_for(lambda: (self.collect / "workload-watcher.pid").exists())
         return self
 
     def stop(self):
@@ -178,13 +176,6 @@ def sleep_ticks(n=3):
 
 
 # --- quiet without workloads --------------------------------------------------------
-
-
-def test_without_sudo_it_writes_nothing(watch):
-    watch.pod("p_ns_c-1.log", "line\n")
-    watch.start(sudo=False)
-    assert watch.proc.wait(timeout=5) == 0
-    assert watch.names() == []
 
 
 def test_nothing_to_follow_writes_only_the_pidfile(watch):

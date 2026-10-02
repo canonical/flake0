@@ -68,8 +68,8 @@ Collected: `cpu` (per-core, incl. `usage_steal`), `mem`, `swap`, `pressure` (PSI
 stall time, the highest-signal metric here), `disk` (bytes **and inodes**), `diskio`, `net`,
 `netstat`, `nstat`, `processes`, `kernel`, `linux_sysctl_fs`, `conntrack` (when the module is
 loaded), and `procstat` for jujud, containerd, dockerd, lxd, snapd, kubelet, pebble, mongod,
-pytest, Telegraf itself and the log watchers with their `juju`, `lxc`, `tail` and `journalctl`
-children.
+pytest, Telegraf itself, and the log watchers with their `juju`, `lxc` and `tail` processes and
+the `journalctl` they start inside LXD containers.
 
 Every metric carries `run_id`, `run_attempt`, `repo`, `workflow`, `job`, `sha`, `ref`,
 `runner_name`, `runner_os` and `image_os`, so you can pull up one run or diff a good run against
@@ -106,10 +106,30 @@ that a test removes keeps its logs. Every 15 s it looks for:
   container's journal with `lxc exec ... journalctl -f`, and each
   `/var/snap/<snap>/common/var/log/<dir>/*.log` file, the layout of the Data Platform snaps.
 
-It never runs `lxc` before a container exists, so it never installs or wakes LXD. Each file starts
-with `# flake0: connect <source> at <ts>`. A restarted container or a dropped journal replays from
-the top, after a new marker. Each LXD container adds an `lxc` client of about 22 MB, and each file
-a `tail` of about 1 MB. See [docs/phase2-workload-logs.md](../../../docs/phase2-workload-logs.md).
+The watcher runs as root, so it needs root or passwordless `sudo`. It never runs `lxc` before a
+container exists, so it never installs or wakes LXD. Each file starts with
+`# flake0: connect <source> at <ts>`. A restarted container or a dropped journal replays from the
+top, after a new marker.
+
+Pod output and container journals land in the artifact as they are, so anything a workload prints,
+secrets included, becomes readable by anyone who can read the repo. Set `logs: false` to collect
+host metrics only.
+
+#### Memory footprint
+
+Each followed file costs one `tail` process, and coreutils differ a lot between runner images. PSS
+measured by procstat on the K8s legs of `consumer-sim`, which followed 31 files, 19 of them from
+`kube-system` and `metallb`:
+
+| Runner | `tail` | Per file | 31 files |
+|---|---|---|---|
+| `ubuntu-24.04` | GNU | about 0.4 MB | 12 MB |
+| `ubuntu-26.04` | uutils 0.10.0 | about 1.7 MB | 53 MB |
+| `ubuntu-26.04-arm` | uutils 0.10.0 | about 3.9 MB | 122 MB |
+
+Each LXD container adds an `lxc exec` client of about 22 MB RSS for its journal. An LXD run follows
+2 or 3 containers and a few snap log files. Every run reports these numbers in `metrics.json`,
+because procstat watches the watchers and their followers.
 
 ### Reading a bundle
 
@@ -166,9 +186,10 @@ and the action warns when it happens. Prefer the default.
 
 ### Root
 
-Telegraf is launched under `sudo` when passwordless `sudo` is available, for a handful of
-root-only `/proc` reads. Without it, everything still runs unprivileged and only those few
-metrics are missing.
+Telegraf and the workload log watcher are launched under `sudo` when passwordless `sudo` is
+available. Telegraf needs it for a handful of root-only `/proc` reads, and every workload log is
+root-only. Without it, Telegraf runs unprivileged with those few metrics missing, the Juju watcher
+sees only the runner user's client store, and no workload logs are collected.
 
 ## Development
 
