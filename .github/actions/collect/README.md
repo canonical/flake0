@@ -34,7 +34,7 @@ exits 0.
 |---|---|---|
 | `phase` | *(required)* | `start` or `stop` |
 | `telegraf-version` | `1.39.2` | Telegraf to install. See [Version pinning](#version-pinning). |
-| `artifact-name` | `flake0-collect-<run_id>-<attempt>-<job>` | Name of the uploaded artifact |
+| `artifact-name` | `flake0-collect-<run_id>-<attempt>-<job>` | Name of the uploaded artifact. Set it in a matrix, because the default repeats across legs and `upload-artifact@v4` rejects duplicates. `stop` reuses the name given at `start`. |
 | `retention-days` | `14` | Artifact retention |
 | `collect-dir` | `$RUNNER_TEMP/flake0-collect` | Collection directory |
 | `cache-telegraf` | `true` | Cache the binary between jobs, avoiding an ~82 MB download per run |
@@ -55,6 +55,9 @@ A `tar.zst` artifact containing:
 | `metrics.json` | Telegraf batches, one JSON object per line: `{"metrics": [...]}` |
 | `telegraf.log` | Collector log |
 | `telegraf.resolved.conf` | The exact config used, for provenance |
+| `juju-debug-<store>-<controller>-<model>.log` | Juju model log with `# flake0:` markers, when Juju is used |
+| `juju-status-<store>-<controller>-<model>.ndjson` | `{"ts": ..., "status": <juju status JSON>}` every 30 s for workload models, when Juju is used |
+| `watcher.log` | Juju watcher diagnostics, when Juju is used |
 
 Collected: `cpu` (per-core, incl. `usage_steal`), `mem`, `swap`, `pressure` (PSI — cpu/mem/io
 stall time, the highest-signal metric here), `disk` (bytes **and inodes**), `diskio`, `net`,
@@ -65,6 +68,26 @@ pytest and Telegraf itself.
 Every metric carries `run_id`, `run_attempt`, `repo`, `workflow`, `job`, `sha`, `ref`,
 `runner_name`, `runner_os` and `image_os`, so you can pull up one run or diff a good run against
 a flaky one.
+
+### Juju logs
+
+The action records Juju without configuration, even when Juju is installed after `start`. Every
+30 s it looks for controllers in the runner user's store (`$JUJU_DATA` or `~/.local/share/juju`)
+and, with passwordless `sudo`, in root's. Spread runs tests as root, so most charm CI uses root's
+store. `<store>` in file names is `user` or `root`.
+
+Every model gets its own follower, including models a test creates and destroys. A follower that
+drops reconnects with `--replay`, which re-sends history. Markers bound the duplicates:
+
+```
+# flake0: connect root:concierge-lxd:testing at 2026-09-25T10:00:00.000Z
+# flake0: reconnect 1 at 2026-09-25T10:05:00.100Z after exit 1
+# flake0: capped at ...     (over 50 MB, reconnects stop replaying)
+# flake0: ended at ...      (the model is gone)
+```
+
+Stores of other users and a `JUJU_DATA` set inside a test step are not covered. Each followed model
+adds a `juju` process with about 25 MB of private memory.
 
 ### Reading a bundle
 
@@ -135,6 +158,8 @@ RUNNER_TEMP=/tmp/t ./scripts/start.sh
 RUNNER_TEMP=/tmp/t ./scripts/stop.sh
 ```
 
-CI (`.github/workflows/smoke-collect.yml`) runs shellcheck, a full start/load/stop cycle on
-`ubuntu-22.04`, `ubuntu-24.04` and `ubuntu-24.04-arm` with bundle and overhead assertions, and a
-regression job that puts shell metacharacters in every tag value.
+CI (`.github/workflows/smoke-collect.yml`) runs shellcheck, the unit tests, a full
+start/load/stop cycle on `ubuntu-24.04` and `ubuntu-24.04-arm` with bundle and overhead
+assertions, and a regression job that puts shell metacharacters in every tag value.
+`.github/workflows/consumer-sim.yml` reproduces charm CI (spread running tests as root, concierge
+bootstrapping Juju after `start`) to test the Juju log watcher against real controllers.

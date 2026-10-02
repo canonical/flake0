@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Fake `sudo -n` for tests/test_juju_watch.py. It runs the command as the current
+# user and tells tests/fakes/juju to serve root's client store.
+FAKE_JUJU_STORE=root exec "$@"

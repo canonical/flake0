@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Fake juju CLI for tests/test_juju_watch.py.
+
+Behaviour comes from files under $FAKE_JUJU_DIR/<store>/, where <store> is
+$FAKE_JUJU_STORE ("root" when invoked through tests/fakes/sudo, else "user"):
+
+  controllers.json                    output of `juju controllers --format=json`
+  <ctl>/models.json                   output of `juju models -c <ctl> --format=json`;
+                                      `juju show-model <ctl>:<model>` succeeds if it lists the model
+  <ctl>/<model>/status.json           output of `juju status --format=json -m <ctl>:<model>`
+  <ctl>/<model>/debug.log             lines `juju debug-log` prints; then, like
+                                      juju 3.6 without a terminal, it exits 0
+                                      unless --tail or -n asked it to block
+  <ctl>/<model>/debug-exit            if present: debug-log prints, deletes this file
+                                      and exits with the code it holds
+
+A missing file makes the command fail like juju does. Every invocation is
+appended to $FAKE_JUJU_DIR/calls.log as "<store> <argv...>".
+"""
+import json
+import os
+import pathlib
+import sys
+import time
+
+root = pathlib.Path(os.environ["FAKE_JUJU_DIR"])
+store = os.environ.get("FAKE_JUJU_STORE", "user")
+args = sys.argv[1:]
+with open(root / "calls.log", "a") as calls:
+    calls.write(" ".join([store, *args]) + "\n")
+base = root / store
+
+
+def flag(name):
+    return args[args.index(name) + 1] if name in args else None
+
+
+def emit(path):
+    if not path.is_file():
+        print(f"ERROR fake juju: no {path.relative_to(root)}", file=sys.stderr)
+        sys.exit(1)
+    sys.stdout.write(path.read_text())
+    sys.stdout.flush()
+
+
+command = args[0] if args else ""
+if command == "controllers":
+    emit(base / "controllers.json")
+elif command == "models":
+    emit(base / flag("-c") / "models.json")
+elif command == "show-model":
+    ctl, model = args[1].split(":", 1)
+    listing = base / ctl / "models.json"
+    names = [m["short-name"] for m in json.loads(listing.read_text())["models"]] if listing.is_file() else []
+    sys.exit(0 if model in names else 1)
+elif command == "status":
+    ctl, model = flag("-m").split(":", 1)
+    emit(base / ctl / model / "status.json")
+elif command == "debug-log":
+    ctl, model = flag("-m").split(":", 1)
+    emit(base / ctl / model / "debug.log")
+    exit_file = base / ctl / model / "debug-exit"
+    if exit_file.is_file():
+        code = int(exit_file.read_text().strip() or "1")
+        exit_file.unlink()
+        sys.exit(code)
+    if "--tail" not in args and "-n" not in args:
+        sys.exit(0)
+    while True:
+        time.sleep(3600)
+else:
+    print(f"ERROR fake juju: unsupported command {args}", file=sys.stderr)
+    sys.exit(2)

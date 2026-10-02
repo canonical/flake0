@@ -95,6 +95,10 @@ if [ -s "$LAUNCHER_PIDFILE" ]; then
 fi
 rm -f "$PIDFILE" "$LAUNCHER_PIDFILE" "$DIR_POINTER"
 
+# --- stop the juju log watcher ---------------------------------------------------
+# Before the chown and tar below, so nothing is still writing into the directory.
+"$(dirname "${BASH_SOURCE[0]}")/stop-watcher.sh" "$FLAKE0_COLLECT_DIR"
+
 # telegraf may have run as root — hand files back so artifact upload can read them
 if [ ${#SUDO[@]} -gt 0 ]; then
   "${SUDO[@]}" chown -R -h "$(id -u):$(id -g)" "$FLAKE0_COLLECT_DIR" 2>/dev/null || true

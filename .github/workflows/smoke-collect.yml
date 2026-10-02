@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: shellcheck
-        run: shellcheck -S style .github/actions/collect/scripts/*.sh .github/actions/plot/scripts/*.sh
+        run: shellcheck -S style .github/actions/collect/scripts/*.sh .github/actions/plot/scripts/*.sh tests/spread/*.sh tests/spread/lifecycle/check.sh tests/fakes/sudo
 
       # Pinned for version-determinism with the plot action's own runtime
       # interpreter -- not because Ubuntu 24.04's system Python is PEP
@@ -31,7 +31,7 @@ jobs:
           pip install ruff==0.16.7 pytest==9.1.1 -r .github/actions/plot/scripts/requirements.txt
 
       - name: ruff
-        run: ruff check .github/actions/plot/scripts/plot_telemetry.py
+        run: ruff check .github/actions/plot/scripts/plot_telemetry.py tests/test_juju_watch.py
 
       - name: pytest
         run: python3 -m pytest tests/
@@ -115,6 +115,14 @@ jobs:
 
           # run-correlation tags are on every metric, not just the first
           jq -ne 'all(inputs; all(.metrics[]; .tags.run_id == env.GITHUB_RUN_ID))' "$M"
+
+          # This runner has no Juju, so the log watcher must leave nothing in the
+          # bundle. consumer-sim.yml tests Juju itself.
+          LEFTOVERS=$(find /tmp/bundle -maxdepth 1 \( -name 'juju-*' -o -name 'watcher.log' -o -name 'watcher.pid' \) -print)
+          if [ -n "$LEFTOVERS" ]; then
+            echo "::error::juju log watcher wrote files on a runner without Juju: $LEFTOVERS"
+            exit 1
+          fi
 
           # no gather/write errors anywhere in the run
           if jq -ne 'any(inputs; any(.metrics[];
@@ -215,6 +223,11 @@ jobs:
             exit 1
           fi
           echo "no telegraf process remains"
+          if pgrep -af 'juju-watch[.]sh' ; then
+            echo "::error::juju log watcher still running after stop"
+            exit 1
+          fi
+          echo "no juju log watcher remains"
 
       - name: Report bundle volume
         run: |

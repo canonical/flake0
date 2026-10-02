@@ -1,0 +1,18 @@
+# Both consumers' concierge config, without their test-only snaps. OpenSearch's
+# load-balancer features move to bootstrap-k8s.sh, and its Docker Hub mirror is IS-only.
+juju:
+  model-defaults:
+    logging-config: <root>=INFO; unit=DEBUG
+providers:
+  k8s:
+    enable: true
+    bootstrap: true
+    channel: 1.32-classic/stable
+    bootstrap-constraints:
+      root-disk: 5G
+host:
+  snaps:
+    jhack:
+      channel: latest/edge
+      connections:
+        - jhack:dot-local-share-juju snapd

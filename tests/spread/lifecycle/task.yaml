@@ -1,0 +1,39 @@
+summary: a follower drops and a model comes and goes, after Juju bootstraps late
+environment:
+  CONSUMER/valkey_lxd,valkey_k8s: valkey
+  CONSUMER/opensearch_lxd,opensearch_k8s: opensearch
+  SUBSTRATE/valkey_lxd,opensearch_lxd: lxd
+  SUBSTRATE/valkey_k8s,opensearch_k8s: k8s
+prepare: |
+  "$SPREAD_PATH/tests/spread/prepare-$CONSUMER.sh"
+execute: |
+  set -euo pipefail
+  CTL="concierge-$SUBSTRATE"
+  # flake0's followers are the only processes whose command line ends like this
+  follower() { printf 'debug-log (--replay )?--tail --date --utc --ms -m %s$' "$1"; }
+  wait_follower() {
+    for _ in $(seq 60); do
+      pgrep -f -- "$(follower "$1")" > /dev/null && return 0
+      sleep 5
+    done
+    return 1
+  }
+
+  juju deploy -m "$CTL:testing" self-signed-certificates --channel 1/stable
+  juju wait-for application self-signed-certificates -m "$CTL:testing" --query='status=="active"' --timeout 20m
+  wait_follower "$CTL:testing"
+
+  # Drop the stream, then log a known line. check.sh looks for it after the marker.
+  pkill -f -- "$(follower "$CTL:testing")"
+  sleep 10
+  mkdir -p /tmp/flake0-sim
+  TOKEN="flake0-sim-$(cat /proc/sys/kernel/random/uuid)"
+  juju exec -m "$CTL:testing" --unit self-signed-certificates/0 -- juju-log "$TOKEN"
+  echo "$TOKEN" > /tmp/flake0-sim/token
+
+  # A model that lives for part of the run, like jubilant's temp_model
+  juju add-model -c "$CTL" extra
+  wait_follower "$CTL:extra"
+  sleep 75
+  juju destroy-model --no-prompt --destroy-storage --force "$CTL:extra"
+  sleep 60

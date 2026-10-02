@@ -1,0 +1,43 @@
+# Copies the integration CI of valkey-operator and opensearch-single-kernel-library,
+# so flake0 is tested here before a charm repo adopts it. Run by consumer-sim.yml.
+#
+# The github-ci backend comes from valkey-operator. Spread SSHes back to its own
+# runner and runs the task as root, which is why consumer controllers live in
+# root's Juju client store. It rewrites sshd config, so run it on CI runners only.
+project: flake0
+
+backends:
+  github-ci:
+    type: adhoc
+    manual: true
+    allocate: |
+      sudo tee /etc/ssh/sshd_config.d/10-spread-github-ci.conf << 'EOF'
+      PasswordAuthentication yes
+      EOF
+
+      sudo systemctl daemon-reload
+      sudo systemctl restart ssh
+
+      echo "runner:$SPREAD_PASSWORD" | sudo chpasswd
+
+      ADDRESS localhost
+    systems:
+      - ubuntu-24.04:
+          username: runner
+      - ubuntu-26.04:
+          username: runner
+      - ubuntu-26.04-arm:
+          username: runner
+
+suites:
+  tests/spread/:
+    summary: Juju bootstrapped by concierge, as the consumers do
+
+path: /root/spread_project
+
+kill-timeout: 1h
+environment:
+  CONCIERGE_JUJU_CHANNEL: 3.6/stable
+prepare: |
+  snap refresh --hold
+  snap install --classic concierge
