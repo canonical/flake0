@@ -202,18 +202,20 @@ echo "flake0-collect: running (pid $(cat "$PIDFILE")), writing $FLAKE0_COLLECT_D
 # juju-watch.sh follows Juju model logs and status once a controller appears in
 # the runner's or root's client store. workload-watch.sh follows LXD container
 # and pod logs. It runs as root, because every workload log is root-only, so it
-# is skipped without root or passwordless sudo. Each prints and
-# writes nothing until it has something to follow. The step would not end while
-# a background child held its stdout, hence all three redirects. A failed launch
-# only warns, because telemetry must never break the job.
+# is skipped without root or passwordless sudo. sudo runs setsid rather than the
+# watcher, so sudo exits at once. As the watcher's parent, sudo would stop itself
+# when stop-watcher.sh stops the watcher, and never resume. Each watcher prints
+# and writes nothing until it has something to follow. The step would not end
+# while a background child held its stdout, hence all three redirects. A failed
+# launch only warns, because telemetry must never break the job.
 launch_watcher() {
-  if ! setsid -f "$@" "$FLAKE0_COLLECT_DIR" </dev/null >/dev/null 2>&1; then
+  if ! "$@" "$FLAKE0_COLLECT_DIR" </dev/null >/dev/null 2>&1; then
     echo "flake0-collect: warning: could not start ${*: -1}" >&2
   fi
 }
 if [ "${FLAKE0_LOGS:-true}" = true ]; then
-  launch_watcher "$ACTION_DIR/scripts/juju-watch.sh"
+  launch_watcher setsid -f "$ACTION_DIR/scripts/juju-watch.sh"
   if [ ${#SUDO[@]} -gt 0 ] || [ "$(id -u)" = 0 ]; then
-    launch_watcher "${SUDO[@]}" "$ACTION_DIR/scripts/workload-watch.sh"
+    launch_watcher "${SUDO[@]}" setsid -f "$ACTION_DIR/scripts/workload-watch.sh"
   fi
 fi
