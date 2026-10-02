@@ -113,3 +113,8 @@ document) must report `verdict`, `root_cause`, `confidence`, and
 `confidence` itself is two sub-fields: `confidence_pct` (0-100, int) and
 `confidence_bucket` (`high`/`medium`/`low`, derived from `confidence_pct`
 per the ranges above).
+
+The concrete OpenSearch index that stores these fields — mapping, field
+types, and the exact `classification.*` field names — is defined in
+`docs/opensearch_index.md`. Keep that mapping in sync if the field names or
+enum values here change.

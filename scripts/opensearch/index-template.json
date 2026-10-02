@@ -1,0 +1,85 @@
+{
+  "index_patterns": ["flake0-classifications-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 1,
+      "index.plugins.index_state_management.rollover_alias": "flake0-classifications"
+    },
+    "mappings": {
+      "dynamic": "strict",
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "schema_version": { "type": "keyword" },
+        "correlation": {
+          "properties": {
+            "repo": { "type": "keyword" },
+            "run_id": { "type": "keyword" },
+            "job_id": { "type": "keyword" },
+            "job_name": { "type": "keyword" },
+            "workflow": { "type": "keyword" },
+            "pr_number": { "type": "integer" },
+            "commit_sha": { "type": "keyword" },
+            "ref": { "type": "keyword" },
+            "event_name": { "type": "keyword" }
+          }
+        },
+        "test": {
+          "properties": {
+            "name": { "type": "keyword" },
+            "charm": { "type": "keyword" },
+            "suite": { "type": "keyword" },
+            "status": { "type": "keyword" },
+            "duration_seconds": { "type": "float" }
+          }
+        },
+        "classification": {
+          "properties": {
+            "verdict": { "type": "keyword" },
+            "root_cause": { "type": "keyword" },
+            "confidence_pct": { "type": "integer" },
+            "confidence_bucket": { "type": "keyword" },
+            "recommendation": { "type": "keyword" },
+            "rationale": { "type": "text" }
+          }
+        },
+        "evidence_signals": {
+          "type": "nested",
+          "properties": {
+            "name": { "type": "keyword" },
+            "status": { "type": "keyword" },
+            "detail": { "type": "text" }
+          }
+        },
+        "evidence_refs": {
+          "type": "nested",
+          "properties": {
+            "kind": { "type": "keyword" },
+            "index": { "type": "keyword" },
+            "doc_id": { "type": "keyword" },
+            "description": { "type": "text" }
+          }
+        },
+        "github": {
+          "properties": {
+            "label": { "type": "keyword" },
+            "comment_url": { "type": "keyword" }
+          }
+        },
+        "llm": {
+          "properties": {
+            "model": { "type": "keyword" },
+            "provider": { "type": "keyword" },
+            "skill_version": { "type": "keyword" },
+            "taxonomy_version": { "type": "keyword" },
+            "raw_output": { "type": "text", "index": false },
+            "prompt_tokens": { "type": "integer" },
+            "completion_tokens": { "type": "integer" }
+          }
+        },
+        "ingested_at": { "type": "date" }
+      }
+    }
+  },
+  "priority": 100
+}

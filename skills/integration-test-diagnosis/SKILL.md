@@ -62,3 +62,9 @@ that combination must still route to `block_merge`, not be dismissed as
 9. **Document Findings**: Record verdict, root cause, confidence,
    recommendation, and the supporting evidence for each — these must be
    reported as independent fields, not merged into a single string.
+
+10. **Publish to OpenSearch**: Ingest the classification into the
+    `flake0-classifications` index (schema in `docs/opensearch_index.md`),
+    including `evidence_refs` pointers back to the already-ingested
+    evidence documents for this run — do not duplicate raw logs/metrics
+    into the classification document itself.
