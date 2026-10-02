@@ -41,6 +41,11 @@ inputs:
       [[inputs.procstat]] block). Rejected by the --test gate if malformed.
     required: false
     default: ""
+  logs:
+    description: >-
+      Follow Juju and workload logs. 'false' collects host metrics only.
+    required: false
+    default: "true"
   cache-telegraf:
     description: >-
       Cache the Telegraf binary between jobs. Avoids an ~82 MB download from
@@ -107,6 +112,7 @@ runs:
         FLAKE0_COLLECT_DIR: ${{ inputs.collect-dir }}
         TELEGRAF_HOME: ${{ runner.temp }}/flake0-telegraf
         FLAKE0_EXTRA_CONFIG: ${{ inputs.extra-config }}
+        FLAKE0_LOGS: ${{ inputs.logs }}
       run: "$GITHUB_ACTION_PATH/scripts/start.sh"
 
     - name: Stop collect

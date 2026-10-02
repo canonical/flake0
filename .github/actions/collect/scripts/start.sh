@@ -198,12 +198,18 @@ fi
 
 echo "flake0-collect: running (pid $(cat "$PIDFILE")), writing $FLAKE0_COLLECT_DIR/metrics.json"
 
-# --- juju log watcher -----------------------------------------------------------
-# Follows Juju model logs and status once a controller appears in the runner's
-# or root's client store, see docs/phase1-juju-logs.md. It prints and writes
-# nothing until then. The step would not end while a background child held its
+# --- log watchers ------------------------------------------------------------------
+# juju-watch.sh follows Juju model logs and status once a controller appears in
+# the runner's or root's client store, see docs/phase1-juju-logs.md.
+# workload-watch.sh follows LXD container and pod logs, see
+# docs/phase2-workload-logs.md. Each prints and writes nothing until it has
+# something to follow. The step would not end while a background child held its
 # stdout, hence all three redirects. A failed launch only warns, because
 # telemetry must never break the job.
-if ! setsid -f "$ACTION_DIR/scripts/juju-watch.sh" "$FLAKE0_COLLECT_DIR" </dev/null >/dev/null 2>&1; then
-  echo "flake0-collect: warning: could not start the juju log watcher" >&2
+if [ "${FLAKE0_LOGS:-true}" = true ]; then
+  for watcher in juju-watch.sh workload-watch.sh; do
+    if ! setsid -f "$ACTION_DIR/scripts/$watcher" "$FLAKE0_COLLECT_DIR" </dev/null >/dev/null 2>&1; then
+      echo "flake0-collect: warning: could not start $watcher" >&2
+    fi
+  done
 fi

@@ -98,12 +98,12 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/bundle"
           tar -xf "$BUNDLE" -C "$RUNNER_TEMP/bundle"
-          ls -l "$RUNNER_TEMP/bundle"
+          ls -lR "$RUNNER_TEMP/bundle"
           tests/spread/lifecycle/check.sh "$RUNNER_TEMP/bundle" "$CTL"
 
-      - name: Assert the watcher was stopped
+      - name: Assert the watchers were stopped
         run: |
-          if pgrep -af 'juju-watch[.]sh|debug-log (--replay )?--tail --date --utc --ms -m '; then
-            echo "::error::juju log watcher still running after stop"
+          if pgrep -af 'juju-watch[.]sh|debug-log (--replay )?--tail --date --utc --ms -m |workload-watch[.]sh|tail -n [+]1 -F|journalctl --utc --no-tail -f'; then
+            echo "::error::a log watcher or follower is still running after stop"
             exit 1
           fi

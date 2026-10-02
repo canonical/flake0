@@ -24,4 +24,20 @@ for m in testing extra; do
 done
 [ ! -e "$STATUS-controller.ndjson" ] || fail "the controller model got status"
 if compgen -G "$B/juju-*-user-*" > /dev/null; then fail "the runner user's store should be empty"; fi
+
+W="$B/workload"
+if [ "$CTL" = concierge-lxd ]; then
+  grep -qF "$TOKEN" "$W"/lxd/*/journal.log || fail "token missing from the LXD journals"
+  grep -q 'Ready to accept connections' "$W"/lxd/*/valkey-charmed_valkey_valkey.log \
+    || fail "valkey's startup missing from its snap log"
+  # one for the controller's container and one for valkey's
+  [ "$(compgen -G "$W/lxd/*/journal.log" | wc -l)" -ge 2 ] || fail "fewer than 2 LXD journals"
+else
+  grep -qF "$TOKEN" "$W"/k8s/valkey-0_testing_charm-*.log \
+    || fail "token missing from the charm container's stdout"
+  # pebble prefixes each line of valkey's log-tailing service with its name
+  grep -qF '[valkey-logs]' "$W"/k8s/valkey-0_testing_valkey-*.log \
+    || fail "valkey's log missing from the valkey container's stdout"
+  compgen -G "$W/k8s/controller-0_controller-${CTL}_*.log" > /dev/null || fail "no controller pod logs"
+fi
 echo "bundle OK"
