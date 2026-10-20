@@ -264,9 +264,9 @@ jobs:
         with:
           phase: start
 
-      # continue-on-error, not `|| true`: the step must fail, as a real failure
-      # would, while this job stays green. `shell: bash` adds pipefail, so the
-      # tee keeps the test's exit code.
+      # continue-on-error, not `|| true`, so the step fails like a real one and
+      # the job stays green. `shell: bash` adds pipefail, so the step keeps the
+      # test's exit code.
       - name: Run integration tests
         id: test
         continue-on-error: true
@@ -280,7 +280,7 @@ jobs:
         with:
           phase: stop
 
-      # The job passes, so pick the step by outcome instead of `failure()`.
+      # The job passes, so `failure()` is false. Check the step's outcome instead.
       # Without the secret the action skips.
       - name: Classify
         id: classify
@@ -304,8 +304,8 @@ jobs:
           grep -q '^## Host metrics (collect bundle)' "$PROMPT"
           grep -q 'test_cache_warmup_meets_deadline' "$PROMPT"
           # A deadline missed on a starved runner is flaky. The model's answer
-          # varies and OpenRouter can fail, so a wrong verdict warns instead of
-          # failing: read the reasoning printed above.
+          # varies and OpenRouter can fail, so a wrong verdict only warns. The
+          # reasoning is printed above.
           jq -e '.verdict == "flaky"' "$VERDICT" \
             || echo "::warning::classify did not call the starved integration (cache) job flaky"
 

@@ -42,7 +42,7 @@ SIGNAL_RE = re.compile(
 )
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 # GitHub prefixes every job log line with a 100 ns timestamp. The time of day
-# is enough to line it up with the metric summary. A tee'd test output has none.
+# is enough to line it up with the metric summary. Tee'd test output has none.
 GH_TS_RE = re.compile(r"^\d{4}-\d\d-\d\dT(\d\d:\d\d:\d\d)\.\d+Z ")
 
 # (label, measurement, tags to match, field)

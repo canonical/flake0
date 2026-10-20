@@ -3,22 +3,22 @@
 Asks a model, through [OpenRouter](https://openrouter.ai), whether a failed job failed from
 flakiness or from a real bug. It reads:
 
-- the test output, which you save to a file with `tee`
-- the job's `collect` bundle: host metric summary (PSI, CPU steal and iowait, memory, swap,
-  disk and inodes, blocked processes, TCP retransmits), peak memory and CPU of the tracked
-  processes, every Juju unit status change, and Juju debug log and workload log excerpts
+- the test output, saved to a file with `tee`
+- the job's `collect` bundle: host metrics (PSI, CPU steal and iowait, memory, swap, disk,
+  inodes, blocked processes, TCP retransmits), peak memory and CPU per tracked process, Juju
+  unit status changes, and excerpts of the Juju debug and workload logs
 - the pull request diff, on `pull_request` runs
 
 Part of the **Flake0** AI debugging suite for CI tests.
 
 ## Usage
 
-Add it as the last step of your test job. GitHub serves a job's own log only once the job has
-finished, so save the test output with `tee` and pass the file:
+Add it as the last step of the test job. GitHub serves a job's log only after the job ends, so
+the action reads the test output from a file instead:
 
 ```yaml
 - name: Run tests
-  shell: bash  # pipefail, so the tee keeps the test's exit code
+  shell: bash  # adds pipefail, so the step keeps the test's exit code
   run: tox -e integration 2>&1 | tee "$RUNNER_TEMP/test.log"
 - name: Stop telemetry
   id: collect
@@ -34,22 +34,17 @@ finished, so save the test output with `tee` and pass the file:
     openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
     log-path: ${{ runner.temp }}/test.log
     bundle-path: ${{ steps.collect.outputs.bundle-path }}
-    job-name: ${{ matrix.name }}  # optional, tells matrix legs apart
+    job-name: ${{ matrix.name }}  # optional, names the matrix leg
 ```
 
-Without `shell: bash`, GitHub runs `bash -e` without `pipefail`, and the pipe takes `tee`'s exit
-code: the test step would pass when the tests fail.
+Keep `shell: bash`. Without it GitHub runs `bash -e` with no `pipefail`, the step takes `tee`'s
+exit code, and failing tests pass.
 
-A step that fails before the tests run (a setup timeout, a snap download) leaves no test output:
-the model then has the bundle alone.
+If the job fails before the tests start, there is no test output and the model sees only the
+bundle. The diff needs `pull-requests: read` on the job.
 
-The diff needs `pull-requests: read` on the job.
-
-Each failed job makes one model call. With the default model a call takes a few seconds and
-costs about $0.01.
-
-`classify` never fails your job. Without a key, or when OpenRouter is unreachable, it says so
-and exits 0.
+Each call takes a few seconds and costs about $0.01 with the default model. The action never
+fails the job. Without a key, or when OpenRouter is down, it logs why and exits 0.
 
 ## Inputs
 
@@ -58,7 +53,7 @@ and exits 0.
 | `openrouter-api-key` | *(required)* | OpenRouter API key. Empty skips classification. |
 | `log-path` | *(required)* | File with the test output |
 | `bundle-path` | `""` | The `collect` stop phase's `bundle-path` output |
-| `job-name` | `github.job` | Name shown in the prompt and the summary |
+| `job-name` | `github.job` | Job name in the prompt and the summary |
 | `model` | `z-ai/glm-5.3` | OpenRouter model slug |
 | `github-token` | `github.token` | Token that can read the pull request diff |
 
@@ -66,9 +61,9 @@ and exits 0.
 
 | Output | Description |
 |---|---|
-| `verdict-path` | Path to `verdict.json` (empty if none was produced) |
+| `verdict-path` | Path to `verdict.json`, empty if there is none |
 
-## What you get
+## Result
 
 A table in the job summary, and `verdict.json`:
 
@@ -78,26 +73,24 @@ A table in the job summary, and `verdict.json`:
  "reasoning": "...", "evidence": ["Host metrics: PSI io some peaked at 74% ..."]}
 ```
 
-`verdict` is `flaky`, `real` or `inconclusive`. An answer that is not valid JSON becomes
-`inconclusive` with the text kept in `raw`. The prompt sits next to `verdict.json` as
-`prompt.md`.
+`verdict` is `flaky`, `real` or `inconclusive`. A reply that is not valid JSON becomes
+`inconclusive`, with the text in `raw`. The prompt is in `prompt.md` next to `verdict.json`.
 
 ## Notes
 
 ### Data leaves GitHub
 
-Test output, workload logs and diffs can hold secrets, and this action sends excerpts of them to
-OpenRouter and the model provider behind it. Do not use it on repositories whose logs must stay
-private.
+Test output, workload logs and diffs can hold secrets. The action sends excerpts of them to
+OpenRouter and its model provider. Don't use it on repositories whose logs must stay private.
 
 ### Inputs are untrusted
 
-The test output and the bundle come from steps that can run pull request code. Only regular
-files are read, so a symlink cannot pull this step's environment or files into the prompt.
+Pull request code runs before this step and can write the test output and the bundle. The
+action reads only regular files, so a symlink can't put this step's environment in the prompt.
 
 ### Fork pull requests
 
-GitHub gives no secrets to workflows from forks, so `classify` skips on them.
+GitHub gives fork pull requests no secrets, so the action skips.
 
 ## Development
 
@@ -109,7 +102,7 @@ shellcheck -S style scripts/*.sh
 # from the repo root
 pytest tests/test_classify.py
 
-# against a real job: a test output, and the bundle extracted from its collect artifact
+# on a real job: its test output, and the bundle from its collect artifact, extracted
 OPENROUTER_API_KEY=... python3 scripts/classify.py --job "my job" --log test.log \
   --bundle bundle --out out --model z-ai/glm-5.3
 ```

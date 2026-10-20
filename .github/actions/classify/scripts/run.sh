@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # flake0-classify — ask a model whether this job failed from flakiness.
-# Runs as a step at the end of the failed test job, from the tee'd test output
-# and the collect bundle on disk: GitHub serves a job's own log only once the
-# job has finished. Must never fail the calling job, like plot. Hence no `set -e`.
+# Runs as the last step of the failed job. GitHub serves a job's log only after
+# the job ends, so it reads the tee'd test output and the bundle from disk.
+# Must never fail the job, like plot. Hence no `set -e`.
 set -uo pipefail
 
 OUTDIR="${RUNNER_TEMP:-/tmp}/flake0-classify"
@@ -25,9 +25,9 @@ skip() {
 WORK="$(mktemp -d "${RUNNER_TEMP:-/tmp}/flake0-classify-work.XXXXXX")"
 mkdir -p "$WORK/bundle" "$OUTDIR"
 
-# The test output and the bundle come from steps that can run pull request code
-# in this job. Keep only regular files: a symlink to /proc/self/environ would
-# put this step's secrets in the prompt, and a FIFO would hang the read.
+# Pull request code runs earlier in this job and can write both files. Keep
+# only regular files. A symlink to /proc/self/environ would put this step's
+# secrets in the prompt, and a FIFO would hang the read.
 if [ -n "${LOG_PATH:-}" ] && [ -f "$LOG_PATH" ] && [ ! -L "$LOG_PATH" ]; then
   cp "$LOG_PATH" "$WORK/test.log"
 else

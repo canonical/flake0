@@ -1,8 +1,8 @@
 name: classify
 description: >-
   Asks a model, through OpenRouter, whether this job failed from flakiness or a
-  real bug. Reads the test output and the collect bundle. Runs as the last step
-  of a failed test job. Part of the Flake0 AI debugging suite.
+  real bug, from the test output and the collect bundle. Add it as the last step
+  of the test job. Part of the Flake0 AI debugging suite.
 author: canonical
 branding:
   icon: help-circle
@@ -20,7 +20,7 @@ inputs:
     required: false
     default: ""
   job-name:
-    description: "Name shown in the prompt and the summary"
+    description: "Job name in the prompt and the summary"
     required: false
     default: ${{ github.job }}
   model:
@@ -34,7 +34,7 @@ inputs:
 
 outputs:
   verdict-path:
-    description: "Path to verdict.json (empty if none was produced)"
+    description: "Path to verdict.json, empty if there is none"
     value: ${{ steps.run.outputs.verdict-path }}
 
 runs:

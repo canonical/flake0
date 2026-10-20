@@ -44,12 +44,12 @@ dashboard PNG straight from a `collect` bundle, with zero configuration:
 See [`.github/actions/plot/README.md`](.github/actions/plot/README.md) for details.
 
 The `classify` action (`.github/actions/classify`) asks a model, through OpenRouter, whether a
-failed job failed from flakiness or a real bug. It reads the test output, the job's `collect`
-bundle and the pull request diff. It runs as the last step of the test job, when the job fails:
+failed job failed from flakiness or a real bug. It reads the test output, the `collect` bundle
+and the pull request diff. Add it as the last step of the test job:
 
 ```yaml
 - name: Run tests
-  shell: bash  # pipefail, so the tee keeps the test's exit code
+  shell: bash  # adds pipefail, so the step keeps the test's exit code
   run: tox -e integration 2>&1 | tee "$RUNNER_TEMP/test.log"
 - name: Stop telemetry
   id: collect
