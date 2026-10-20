@@ -21,20 +21,16 @@ def _metric(name, tags, fields, ts):
     return {"name": name, "tags": tags, "fields": fields, "timestamp": ts}
 
 
-def _bundle(path, metrics, runner="GitHub Actions 1", attempt="1"):
+def _bundle(path, metrics):
     path.mkdir()
-    for m in metrics:
-        m["tags"].update(runner_name=runner, run_attempt=attempt)
     (path / "metrics.json").write_text(json.dumps({"metrics": metrics}) + "\n")
     return path
 
 
-def _main_args(tmp_path, jobs):
-    (tmp_path / "jobs.ndjson").write_text("".join(json.dumps(j) + "\n" for j in jobs))
-    (tmp_path / "logs").mkdir()
-    (tmp_path / "bundles").mkdir()
-    args = ["--jobs", str(tmp_path / "jobs.ndjson"), "--logs", str(tmp_path / "logs")]
-    return args + ["--bundles", str(tmp_path / "bundles"), "--out", str(tmp_path / "out"), "--model", "m"]
+def _main_args(tmp_path):
+    (tmp_path / "test.log").write_text("FAILED test_x - AssertionError\n")
+    args = ["--job", "smoke", "--log", str(tmp_path / "test.log"), "--bundle", str(tmp_path / "bundle")]
+    return args + ["--out", str(tmp_path / "out"), "--model", "m"]
 
 
 def test_clip_keeps_head_and_tail():
@@ -133,24 +129,10 @@ def test_top_processes_reports_peaks_and_restarts():
 
 
 def test_build_prompt_clips_each_section():
-    job = {"id": 1, "name": "integration", "runner_name": "r"}
-    prompt = classify.build_prompt(job, "L" * 200_000, None, "D" * 200_000)
+    prompt = classify.build_prompt("integration", "L" * 200_000, None, "D" * 200_000)
     assert len(prompt) <= classify.PROMPT_BUDGET
-    assert "no collect bundle found" in prompt
+    assert "no collect bundle" in prompt
     assert prompt.count("characters cut") == 2
-
-
-def test_bundles_match_by_runner_name_and_attempt(tmp_path):
-    bundles = tmp_path / "bundles"
-    bundles.mkdir()
-    mem = {"available_percent": 50.0}
-    _bundle(bundles / "11", [_metric("mem", {}, dict(mem), 1_000)], runner="GitHub Actions 7", attempt="2")
-    _bundle(bundles / "12", [_metric("mem", {}, dict(mem), 1_000)], runner="GitHub Actions 7", attempt="1")
-    # one runner, two bundles in this attempt: neither can be trusted
-    _bundle(bundles / "13", [_metric("mem", {}, dict(mem), 1_000)], runner="self-hosted", attempt="2")
-    _bundle(bundles / "14", [_metric("mem", {}, dict(mem), 1_000)], runner="self-hosted", attempt="2")
-    (bundles / "15").mkdir()  # a plot artifact holds no metrics
-    assert classify.bundles_by_runner(bundles, "2") == {"GitHub Actions 7": str(bundles / "11")}
 
 
 def test_parse_verdict_keeps_only_known_keys_and_types():
@@ -172,9 +154,9 @@ def test_parse_verdict_keeps_only_known_keys_and_types():
     assert classify.parse_verdict([{"type": "text"}])["verdict"] == "inconclusive"
 
 
-def test_main_writes_verdicts_and_summary(tmp_path, monkeypatch):
-    args = _main_args(tmp_path, [{"id": 5, "name": "smoke", "runner_name": "r"}])
-    (tmp_path / "logs" / "5.log").write_text("FAILED test_x - AssertionError\n")
+def test_main_writes_verdict_and_summary(tmp_path, monkeypatch):
+    args = _main_args(tmp_path)
+    _bundle(tmp_path / "bundle", [_metric("mem", {}, {"available_percent": 3.0}, 1_000)])
     summary = tmp_path / "summary.md"
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
     seen = {}
@@ -186,41 +168,39 @@ def test_main_writes_verdicts_and_summary(tmp_path, monkeypatch):
     monkeypatch.setattr(classify, "call_openrouter", fake_call)
     assert classify.main([*args, "--diff", str(tmp_path / "none")]) == 0
     assert "FAILED test_x" in seen["prompt"]
-    verdicts = json.loads((tmp_path / "out" / "verdicts.json").read_text())
-    assert verdicts[0]["verdict"] == "real"
-    assert verdicts[0]["model"] == "m"
+    assert "Memory available %: min 3.0" in seen["prompt"]
+    assert (tmp_path / "out" / "prompt.md").read_text() == seen["prompt"]
+    verdict = json.loads((tmp_path / "out" / "verdict.json").read_text())
+    assert verdict["verdict"] == "real"
+    assert verdict["model"] == "m"
+    assert verdict["job"] == "smoke"
     assert "| smoke | **real** | 0.9 | test-bug |" in summary.read_text()
 
 
-def test_main_survives_a_bad_reply_and_classifies_the_rest(tmp_path, monkeypatch):
-    args = _main_args(tmp_path, [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}])
-    replies = iter([TypeError("'NoneType' object is not subscriptable"), '{"verdict": "flaky"}'])
-
+def test_main_writes_a_verdict_when_the_call_fails(tmp_path, monkeypatch):
     def fake_call(prompt, model, key):
-        reply = next(replies)
-        if isinstance(reply, Exception):
-            raise reply
-        return reply
+        raise TypeError("'NoneType' object is not subscriptable")
 
     monkeypatch.setattr(classify, "call_openrouter", fake_call)
-    assert classify.main(args) == 0
-    verdicts = json.loads((tmp_path / "out" / "verdicts.json").read_text())
-    assert [v["verdict"] for v in verdicts] == ["inconclusive", "flaky"]
-    assert verdicts[0]["error"].startswith("TypeError")
+    # no log and no bundle either
+    assert classify.main(["--out", str(tmp_path / "out"), "--model", "m", "--log", str(tmp_path / "none")]) == 0
+    verdict = json.loads((tmp_path / "out" / "verdict.json").read_text())
+    assert verdict["verdict"] == "inconclusive"
+    assert verdict["error"].startswith("TypeError")
+    assert "(test output unavailable)" in (tmp_path / "out" / "prompt.md").read_text()
 
 
 def test_main_survives_a_hostile_bundle(tmp_path, monkeypatch):
-    args = _main_args(tmp_path, [{"id": 1, "name": "a", "runner_name": "r"}])
-    hostile = tmp_path / "bundles" / "9"
+    args = _main_args(tmp_path)
+    hostile = tmp_path / "bundle"
     hostile.mkdir()
     (hostile / "metrics.json").write_text(
         '{"metrics": [{"name": ["x"], "tags": {}, "fields": {}, "timestamp": 1}]}\n'
         + '{"metrics": [' + "9" * 5000 + "]}\n"
         + "[" * 100_000 + "\n"
+        # a timestamp no clock can format
+        + json.dumps({"metrics": [_metric("mem", {}, {"available_percent": 1.0}, 1e20)]}) + "\n"
     )
-    # the matched bundle has a timestamp no clock can format
-    _bundle(tmp_path / "bundles" / "10", [_metric("mem", {}, {"available_percent": 1.0}, 1e20)], runner="r")
-    (tmp_path / "logs" / "1.log").write_text("FAILED test_x\n")
     seen = {}
 
     def fake_call(prompt, model, key):
@@ -230,8 +210,8 @@ def test_main_survives_a_hostile_bundle(tmp_path, monkeypatch):
     monkeypatch.setattr(classify, "call_openrouter", fake_call)
     summary = tmp_path / "summary.md"
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
-    assert classify.main([*args, "--attempt", "1"]) == 0
+    assert classify.main(args) == 0
     assert "FAILED test_x" in seen["prompt"]
     assert "the collect bundle could not be read" in seen["prompt"]
-    assert json.loads((tmp_path / "out" / "verdicts.json").read_text())[0]["verdict"] == "flaky"
-    assert "| a | **flaky** | 0 |" in summary.read_text()
+    assert json.loads((tmp_path / "out" / "verdict.json").read_text())["verdict"] == "flaky"
+    assert "| smoke | **flaky** | 0 |" in summary.read_text()

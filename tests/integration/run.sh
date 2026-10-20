@@ -2,7 +2,7 @@
 # A flaky-by-design job for checking classify: a timing-sensitive test that
 # passes on an idle runner and misses its deadline on a starved one, the noisy
 # neighbour behind many real CI flakes. The stress lives in this script so the
-# job log, which classify reads, shows the failure but not its cause. The
+# test output, which classify reads, shows the failure but not its cause. The
 # bundle's PSI and load are left as the evidence.
 set -uo pipefail
 

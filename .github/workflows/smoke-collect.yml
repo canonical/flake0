@@ -250,6 +250,12 @@ jobs:
     # script keep the cause out of what the model reads.
     name: integration (cache)
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read # the diff
+    # Job level: a step's own env is not available to its `if`.
+    env:
+      HAS_KEY: ${{ secrets.OPENROUTER_API_KEY != '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -258,63 +264,49 @@ jobs:
         with:
           phase: start
 
-      # continue-on-error, not `|| true`: the log must show a failed step, as a
-      # real failure would, while this job stays green.
+      # continue-on-error, not `|| true`: the step must fail, as a real failure
+      # would, while this job stays green. `shell: bash` adds pipefail, so the
+      # tee keeps the test's exit code.
       - name: Run integration tests
+        id: test
         continue-on-error: true
-        run: tests/integration/run.sh
+        shell: bash
+        run: tests/integration/run.sh 2>&1 | tee "$RUNNER_TEMP/test.log"
 
       - name: Stop collection
+        id: stop
         if: always()
         uses: ./.github/actions/collect
         with:
           phase: stop
 
-  classify:
-    # The smoke and cache jobs pass even though their tests fail, so pick them
-    # by name instead of by conclusion. Without the secret the action skips.
-    name: classify
-    needs: [smoke, cache]
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-24.04
-    permissions:
-      actions: read
-      contents: read
-      pull-requests: read
-    # Job level: a step's own env is not available to its `if`.
-    env:
-      HAS_KEY: ${{ secrets.OPENROUTER_API_KEY != '' }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
+      # The job passes, so pick the step by outcome instead of `failure()`.
+      # Without the secret the action skips.
       - name: Classify
         id: classify
+        if: ${{ steps.test.outcome == 'failure' }}
         uses: ./.github/actions/classify
         env:
-          FLAKE0_CLASSIFY_NAME_RE: "^(smoke |integration )"
           FLAKE0_CLASSIFY_NO_DIFF: "1"
         with:
           openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+          log-path: ${{ runner.temp }}/test.log
+          bundle-path: ${{ steps.stop.outputs.bundle-path }}
 
-      - name: Assert each job got its bundle and the expected verdict
-        if: env.HAS_KEY == 'true'
+      - name: Assert classify got the test output, the bundle and the expected verdict
+        if: ${{ steps.test.outcome == 'failure' && env.HAS_KEY == 'true' }}
         env:
-          VERDICTS: ${{ steps.classify.outputs.verdicts-path }}
-          PROMPTS: ${{ runner.temp }}/flake0-classify
+          VERDICT: ${{ steps.classify.outputs.verdict-path }}
+          PROMPT: ${{ runner.temp }}/flake0-classify/prompt.md
         run: |
           set -euxo pipefail
-          jq . "$VERDICTS"
-          jq -e 'length == 3' "$VERDICTS"
-          # every prompt found its bundle by runner_name and saw its failing test
-          for p in "$PROMPTS"/prompt-*.md; do
-            grep -q '^## Host metrics (collect bundle)' "$p"
-            grep -qE 'test_fail|test_cache_warmup_meets_deadline' "$p"
-          done
+          jq . "$VERDICT"
+          grep -q '^## Host metrics (collect bundle)' "$PROMPT"
+          grep -q 'test_cache_warmup_meets_deadline' "$PROMPT"
           # A deadline missed on a starved runner is flaky. The model's answer
           # varies and OpenRouter can fail, so a wrong verdict warns instead of
-          # failing: read the reasoning printed above. The smoke legs hide their
-          # failure behind `|| true`, so their verdict proves nothing.
-          jq -e 'any(.[]; (.job | startswith("integration ")) and .verdict == "flaky")' "$VERDICTS" \
+          # failing: read the reasoning printed above.
+          jq -e '.verdict == "flaky"' "$VERDICT" \
             || echo "::warning::classify did not call the starved integration (cache) job flaky"
 
   hostile-tags:

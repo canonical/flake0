@@ -1,9 +1,9 @@
 # Flake0 — classify action
 
-Asks a model, through [OpenRouter](https://openrouter.ai), whether each failed job in a run
-failed from flakiness or from a real bug. For every failed job it reads:
+Asks a model, through [OpenRouter](https://openrouter.ai), whether a failed job failed from
+flakiness or from a real bug. It reads:
 
-- the job log, which holds the test output (no change to how you run tests)
+- the test output, which you save to a file with `tee`
 - the job's `collect` bundle: host metric summary (PSI, CPU steal and iowait, memory, swap,
   disk and inodes, blocked processes, TCP retransmits), peak memory and CPU of the tracked
   processes, every Juju unit status change, and Juju debug log and workload log excerpts
@@ -13,84 +13,87 @@ Part of the **Flake0** AI debugging suite for CI tests.
 
 ## Usage
 
-Add one job after your test jobs. A job's log is only served once that job has finished, so
-this cannot run as a step inside the test job.
+Add it as the last step of your test job. GitHub serves a job's own log only once the job has
+finished, so save the test output with `tee` and pass the file:
 
 ```yaml
-classify:
-  needs: [integration]
+- name: Run tests
+  shell: bash  # pipefail, so the tee keeps the test's exit code
+  run: tox -e integration 2>&1 | tee "$RUNNER_TEMP/test.log"
+- name: Stop telemetry
+  id: collect
+  if: always()
+  uses: canonical/flake0/.github/actions/collect@main
+  with:
+    phase: stop
+- name: Classify failure
   if: failure()
-  runs-on: ubuntu-latest
-  permissions:
-    actions: read        # jobs, logs, artifacts
-    contents: read
-    pull-requests: read  # the diff
-  steps:
-    - uses: canonical/flake0/.github/actions/classify@main
-      with:
-        openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+  timeout-minutes: 5
+  uses: canonical/flake0/.github/actions/classify@main
+  with:
+    openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+    log-path: ${{ runner.temp }}/test.log
+    bundle-path: ${{ steps.collect.outputs.bundle-path }}
+    job-name: ${{ matrix.name }}  # optional, tells matrix legs apart
 ```
 
-It classifies jobs that ended with `failure` or `timed_out`. Bundles are found in this run's
-artifacts whose names start with `flake0-`, which the `collect` default name does. Each bundle
-is matched to its job by runner name and run attempt, so matrix legs need nothing extra. A job
-without a bundle is classified from its log alone, and so is a job whose runner name has two
-bundles (a reused self-hosted runner): no bundle is better than another job's.
+Without `shell: bash`, GitHub runs `bash -e` without `pipefail`, and the pipe takes `tee`'s exit
+code: the test step would pass when the tests fail.
 
-Each failed job costs one model call, and the calls run one after another. With the default
-model a call takes a few seconds and costs about $0.01, so a 60-leg matrix that fails on one
-regression makes 60 calls. Give the job a `timeout-minutes` that fits your matrix.
+A step that fails before the tests run (a setup timeout, a snap download) leaves no test output:
+the model then has the bundle alone.
 
-`classify` never fails your job. Without a key, without failed jobs, or when OpenRouter is
-unreachable, it says so and exits 0.
+The diff needs `pull-requests: read` on the job.
+
+Each failed job makes one model call. With the default model a call takes a few seconds and
+costs about $0.01.
+
+`classify` never fails your job. Without a key, or when OpenRouter is unreachable, it says so
+and exits 0.
 
 ## Inputs
 
 | Input | Default | Description |
 |---|---|---|
 | `openrouter-api-key` | *(required)* | OpenRouter API key. Empty skips classification. |
+| `log-path` | *(required)* | File with the test output |
+| `bundle-path` | `""` | The `collect` stop phase's `bundle-path` output |
+| `job-name` | `github.job` | Name shown in the prompt and the summary |
 | `model` | `z-ai/glm-5.3` | OpenRouter model slug |
-| `github-token` | `github.token` | Token that can read the run's jobs, logs, artifacts and pull request |
+| `github-token` | `github.token` | Token that can read the pull request diff |
 
 ## Outputs
 
 | Output | Description |
 |---|---|
-| `verdicts-path` | Path to `verdicts.json` (empty if none was produced) |
+| `verdict-path` | Path to `verdict.json` (empty if none was produced) |
 
 ## What you get
 
-A table in the job summary, and `verdicts.json` with one entry per failed job:
+A table in the job summary, and `verdict.json`:
 
 ```json
-{"job": "integration (lxd)", "job_id": 1, "model": "z-ai/glm-5.3",
+{"job": "integration (lxd)", "model": "z-ai/glm-5.3",
  "verdict": "flaky", "confidence": 0.8, "category": "resource-starvation",
  "reasoning": "...", "evidence": ["Host metrics: PSI io some peaked at 74% ..."]}
 ```
 
 `verdict` is `flaky`, `real` or `inconclusive`. An answer that is not valid JSON becomes
-`inconclusive` with the text kept in `raw`. The prompt sent for each job sits next to
-`verdicts.json` as `prompt-<job id>.md`.
+`inconclusive` with the text kept in `raw`. The prompt sits next to `verdict.json` as
+`prompt.md`.
 
 ## Notes
 
 ### Data leaves GitHub
 
-Job logs, workload logs and diffs can hold secrets, and this action sends excerpts of them to
+Test output, workload logs and diffs can hold secrets, and this action sends excerpts of them to
 OpenRouter and the model provider behind it. Do not use it on repositories whose logs must stay
 private.
 
-### Bundles are untrusted
+### Inputs are untrusted
 
-A bundle comes from the test job, which can run pull request code. Only regular files are kept
-after extraction, so a symlink in a bundle cannot pull this job's environment or files into the
-prompt.
-
-### `gh` version
-
-Job logs are fetched with `gh api --allow-escape-sequences`, which older `gh` releases lack.
-GitHub-hosted runners have it. On a self-hosted runner with an older `gh`, every job is
-classified without its log.
+The test output and the bundle come from steps that can run pull request code. Only regular
+files are read, so a symlink cannot pull this step's environment or files into the prompt.
 
 ### Fork pull requests
 
@@ -106,9 +109,7 @@ shellcheck -S style scripts/*.sh
 # from the repo root
 pytest tests/test_classify.py
 
-# against a real run: fetch a job log, then classify it
-gh api --allow-escape-sequences repos/OWNER/REPO/actions/jobs/JOB_ID/logs > logs/JOB_ID.log
-echo '{"id": JOB_ID, "name": "my job", "runner_name": "..."}' > jobs.ndjson
-OPENROUTER_API_KEY=... python3 scripts/classify.py --jobs jobs.ndjson --logs logs \
-  --bundles bundles --out out --model z-ai/glm-5.3
+# against a real job: a test output, and the bundle extracted from its collect artifact
+OPENROUTER_API_KEY=... python3 scripts/classify.py --job "my job" --log test.log \
+  --bundle bundle --out out --model z-ai/glm-5.3
 ```

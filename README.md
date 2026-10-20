@@ -43,20 +43,27 @@ dashboard PNG straight from a `collect` bundle, with zero configuration:
 
 See [`.github/actions/plot/README.md`](.github/actions/plot/README.md) for details.
 
-The `classify` action (`.github/actions/classify`) asks a model, through OpenRouter, whether each
-failed job failed from flakiness or a real bug. It reads the job log, the job's `collect` bundle
-and the pull request diff. It runs as its own job after the test jobs:
+The `classify` action (`.github/actions/classify`) asks a model, through OpenRouter, whether a
+failed job failed from flakiness or a real bug. It reads the test output, the job's `collect`
+bundle and the pull request diff. It runs as the last step of the test job, when the job fails:
 
 ```yaml
-classify:
-  needs: [integration]
+- name: Run tests
+  shell: bash  # pipefail, so the tee keeps the test's exit code
+  run: tox -e integration 2>&1 | tee "$RUNNER_TEMP/test.log"
+- name: Stop telemetry
+  id: collect
+  if: always()
+  uses: canonical/flake0/.github/actions/collect@main
+  with:
+    phase: stop
+- name: Classify failure
   if: failure()
-  runs-on: ubuntu-latest
-  permissions: { actions: read, contents: read, pull-requests: read }
-  steps:
-    - uses: canonical/flake0/.github/actions/classify@main
-      with:
-        openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+  uses: canonical/flake0/.github/actions/classify@main
+  with:
+    openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+    log-path: ${{ runner.temp }}/test.log
+    bundle-path: ${{ steps.collect.outputs.bundle-path }}
 ```
 
 See [`.github/actions/classify/README.md`](.github/actions/classify/README.md) for details.

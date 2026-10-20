@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
-"""Ask a model, through OpenRouter, whether failed CI jobs failed from flakiness.
+"""Ask a model, through OpenRouter, whether a failed CI job failed from flakiness.
 
-    classify.py --jobs jobs.ndjson --logs <dir> --bundles <dir> --out <dir> --model <slug>
-                [--diff <file>] [--attempt <n>]
+    classify.py --out <dir> --model <slug> [--job <name>] [--log <file>]
+                [--bundle <dir>] [--diff <file>]
 
-Each line of jobs.ndjson is a job from the GitHub jobs API ({id, name,
-runner_name}). <logs>/<id>.log is that job's log. Each subdirectory of
-<bundles> is one extracted collect bundle, matched to its job by the
-runner_name tag every metric carries. Writes <out>/prompt-<id>.md per job and
-<out>/verdicts.json. The key comes from $OPENROUTER_API_KEY.
+<log> is the test output, <bundle> the job's extracted collect bundle. Writes
+<out>/prompt.md and <out>/verdict.json. The key comes from $OPENROUTER_API_KEY.
 
 Logs, bundles and model replies are all untrusted: nothing read from them may
-stop the other jobs from being classified.
+stop a verdict from being written.
 """
 
 import argparse
@@ -28,11 +25,11 @@ from urllib.request import Request, urlopen
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 VERDICTS = ("flaky", "real", "inconclusive")
 
-# Character budgets per prompt section. The job log goes first and gets the
-# most: it is the only place the test failure itself appears.
+# Character budgets per prompt section. The test output goes first and gets
+# the most: it is the only place the test failure itself appears.
 # About 400 KB in all, ~120K tokens: an eighth of the default model's
 # (z-ai/glm-5.3) context, and about $0.01 per job.
-JOB_LOG_BUDGET = 120_000
+TEST_LOG_BUDGET = 120_000
 JUJU_LOG_BUDGET = 80_000
 WORKLOAD_BUDGET = 80_000
 TIMELINE_BUDGET = 40_000
@@ -45,7 +42,7 @@ SIGNAL_RE = re.compile(
 )
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 # GitHub prefixes every job log line with a 100 ns timestamp. The time of day
-# is enough to line it up with the metric summary.
+# is enough to line it up with the metric summary. A tee'd test output has none.
 GH_TS_RE = re.compile(r"^\d{4}-\d\d-\d\dT(\d\d:\d\d:\d\d)\.\d+Z ")
 
 # (label, measurement, tags to match, field)
@@ -70,7 +67,7 @@ SIGNALS = [
 # a fixed root-cause category list, and a 0-100 confidence derived from evidence.
 SYSTEM_PROMPT = """\
 You triage failed CI jobs that run Juju charm integration tests on GitHub runners.
-Decide whether each failure is:
+Decide whether the failure is:
 - "flaky": caused by the environment or timing, and likely to pass on a rerun of the same
   code. Examples: runner CPU, memory, disk or I/O starvation, network or upstream service
   errors, snap or image download failures, races and too-short timeouts in the test.
@@ -291,16 +288,16 @@ def bundle_sections(bundle_dir):
     return sections
 
 
-def build_prompt(job, job_log, bundle_dir, diff):
-    parts = [f"# Failed job: {job.get('name')} (job id {job.get('id')}, runner {job.get('runner_name')})"]
-    parts.append(f"## GitHub job log\n{clip(job_log, JOB_LOG_BUDGET)}")
+def build_prompt(job, test_log, bundle_dir, diff):
+    parts = [f"# Failed job: {job}"]
+    parts.append(f"## Test output\n{clip(test_log, TEST_LOG_BUDGET)}")
     if bundle_dir:
         try:
             parts.extend(f"## {title}\n{body}" for title, body in bundle_sections(bundle_dir))
-        except Exception as exc:  # noqa: BLE001 -- a broken bundle must not cost the job its log
+        except Exception as exc:  # noqa: BLE001 -- a broken bundle must not cost the prompt its test output
             parts.append(f"## Host metrics\n(the collect bundle could not be read: {type(exc).__name__})")
     else:
-        parts.append("## Host metrics\n(no collect bundle found for this job)")
+        parts.append("## Host metrics\n(no collect bundle for this job)")
     if diff:
         parts.append(f"## Code change under test (diff)\n{clip(diff, DIFF_BUDGET)}")
     return clip("\n\n".join(parts), PROMPT_BUDGET)
@@ -344,76 +341,43 @@ def parse_verdict(content):
     }
 
 
-def bundles_by_runner(bundles_dir, attempt):
-    """Bundle directory per runner name, for this run attempt only.
-
-    A runner name with two bundles (a reused self-hosted runner) maps to none:
-    no bundle is better than another job's.
-    """
-    out = {}
-    for d in sorted(glob.glob(os.path.join(bundles_dir, "*"))):
-        first = next((recs[0] for recs in load_metrics(d).values()), None)
-        if first is None:
-            continue
-        if attempt and str(first["tags"].get("run_attempt")) != str(attempt):
-            continue
-        runner = first["tags"].get("runner_name")
-        if isinstance(runner, str) and runner:
-            out[runner] = None if runner in out else d
-    return {runner: d for runner, d in out.items() if d}
-
-
-def summary_markdown(results):
+def summary_markdown(r):
+    confidence = "" if r.get("confidence") is None else r["confidence"]
     rows = ["## flake0 classify", "", "| Job | Verdict | Confidence | Category |", "|---|---|---|---|"]
-    rows += [f"| {r['job']} | **{r['verdict']}** | {'' if r.get('confidence') is None else r['confidence']} | {r.get('category', '')} |" for r in results]
-    for r in results:
-        rows += ["", f"### {r['job']}", "", r.get("reasoning") or r.get("error") or "(no reasoning)"]
-        rows += [f"- {e}" for e in r.get("evidence") or []]
+    rows += [f"| {r['job']} | **{r['verdict']}** | {confidence} | {r.get('category', '')} |", ""]
+    rows += [r.get("reasoning") or r.get("error") or "(no reasoning)"]
+    rows += [f"- {e}" for e in r.get("evidence") or []]
     return "\n".join(rows) + "\n"
-
-
-def classify_job(job, args, bundles, diff, key):
-    log_path = os.path.join(args.logs, f"{job['id']}.log")
-    job_log = excerpt(log_path, tail=1000, max_hits=300) if os.path.isfile(log_path) else "(job log unavailable)"
-    prompt = build_prompt(job, job_log, bundles.get(job.get("runner_name")), diff)
-    Path(args.out, f"prompt-{job['id']}.md").write_text(prompt, encoding="utf-8")
-    return parse_verdict(call_openrouter(prompt, args.model, key))
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="classify.py", description=__doc__.splitlines()[0])
-    parser.add_argument("--jobs", required=True)
-    parser.add_argument("--logs", required=True)
-    parser.add_argument("--bundles", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--model", required=True)
+    parser.add_argument("--job", default="")
+    parser.add_argument("--log")
+    parser.add_argument("--bundle")
     parser.add_argument("--diff")
-    parser.add_argument("--attempt", help="keep only bundles from this run attempt")
     args = parser.parse_args(argv)
 
-    key = os.environ.get("OPENROUTER_API_KEY", "")
     os.makedirs(args.out, exist_ok=True)
-    with open(args.jobs, encoding="utf-8") as fh:
-        jobs = [json.loads(line) for line in fh if line.strip()]
-    diff = ""
-    if args.diff and os.path.isfile(args.diff):
-        diff = Path(args.diff).read_text(encoding="utf-8", errors="replace")
-    bundles = bundles_by_runner(args.bundles, args.attempt)
+    try:
+        test_log = excerpt(args.log, tail=1000, max_hits=300) if args.log and os.path.isfile(args.log) else "(test output unavailable)"
+        diff = Path(args.diff).read_text(encoding="utf-8", errors="replace") if args.diff and os.path.isfile(args.diff) else ""
+        bundle = args.bundle if args.bundle and os.path.isdir(args.bundle) else None
+        prompt = build_prompt(args.job, test_log, bundle, diff)
+        Path(args.out, "prompt.md").write_text(prompt, encoding="utf-8")
+        verdict = parse_verdict(call_openrouter(prompt, args.model, os.environ.get("OPENROUTER_API_KEY", "")))
+    except Exception as exc:  # noqa: BLE001 -- a bad input or reply still gets a verdict
+        verdict = {"verdict": "inconclusive", "error": f"{type(exc).__name__}: {exc}"}
+    result = {"job": args.job, "model": args.model, **verdict}
+    print(f"classify: {args.job}: {verdict['verdict']}")
 
-    results = []
-    for job in jobs:
-        try:
-            verdict = classify_job(job, args, bundles, diff, key)
-        except Exception as exc:  # noqa: BLE001 -- one job's bad input or reply must not stop the others
-            verdict = {"verdict": "inconclusive", "error": f"{type(exc).__name__}: {exc}"}
-        results.append({"job": job.get("name"), "job_id": job.get("id"), "model": args.model, **verdict})
-        print(f"classify: {job.get('name')}: {verdict['verdict']}")
-
-    Path(args.out, "verdicts.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
+    Path(args.out, "verdict.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as fh:
-            fh.write(summary_markdown(results))
+            fh.write(summary_markdown(result))
     return 0
 
 
