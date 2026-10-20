@@ -43,6 +43,24 @@ dashboard PNG straight from a `collect` bundle, with zero configuration:
 
 See [`.github/actions/plot/README.md`](.github/actions/plot/README.md) for details.
 
+The `classify` action (`.github/actions/classify`) asks a model, through OpenRouter, whether each
+failed job failed from flakiness or a real bug. It reads the job log, the job's `collect` bundle
+and the pull request diff. It runs as its own job after the test jobs:
+
+```yaml
+classify:
+  needs: [integration]
+  if: failure()
+  runs-on: ubuntu-latest
+  permissions: { actions: read, contents: read, pull-requests: read }
+  steps:
+    - uses: canonical/flake0/.github/actions/classify@main
+      with:
+        openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+```
+
+See [`.github/actions/classify/README.md`](.github/actions/classify/README.md) for details.
+
 ## Community and support
 
 Flake0 is an open-source project that welcomes community contributions, suggestions, fixes and constructive feedback.

@@ -1,0 +1,40 @@
+name: classify
+description: >-
+  Asks a model, through OpenRouter, whether this run's failed jobs failed from
+  flakiness or a real bug. Reads each failed job's log and its collect bundle.
+  Runs in its own job after the test jobs. Part of the Flake0 AI debugging suite.
+author: canonical
+branding:
+  icon: help-circle
+  color: orange
+
+inputs:
+  openrouter-api-key:
+    description: "OpenRouter API key. Empty (e.g. on fork pull requests) skips classification."
+    required: true
+  model:
+    description: "OpenRouter model slug"
+    required: false
+    default: "z-ai/glm-5.3"
+  github-token:
+    description: "Token that can read this run's jobs, logs, artifacts and pull request"
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  verdicts-path:
+    description: "Path to verdicts.json, one verdict per failed job (empty if none was produced)"
+    value: ${{ steps.run.outputs.verdicts-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Classify failures
+      id: run
+      shell: bash
+      env:
+        OPENROUTER_API_KEY: ${{ inputs.openrouter-api-key }}
+        MODEL: ${{ inputs.model }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: "$GITHUB_ACTION_PATH/scripts/run.sh"

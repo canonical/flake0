@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: shellcheck
-        run: shellcheck -S style .github/actions/collect/scripts/*.sh .github/actions/plot/scripts/*.sh tests/spread/*.sh tests/spread/lifecycle/check.sh tests/fakes/sudo
+        run: shellcheck -S style .github/actions/collect/scripts/*.sh .github/actions/plot/scripts/*.sh .github/actions/classify/scripts/*.sh tests/spread/*.sh tests/spread/lifecycle/check.sh tests/integration/run.sh tests/fakes/sudo
 
       # Pinned for version-determinism with the plot action's own runtime
       # interpreter -- not because Ubuntu 24.04's system Python is PEP
@@ -32,7 +32,7 @@ jobs:
           pip install ruff==0.16.7 pytest==9.1.1 -r .github/actions/plot/scripts/requirements.txt
 
       - name: ruff
-        run: ruff check .github/actions/plot/scripts/plot_telemetry.py tests/test_juju_watch.py tests/test_workload_watch.py tests/fakes/lxc
+        run: ruff check .github/actions/plot/scripts/plot_telemetry.py .github/actions/classify/scripts/classify.py tests/test_juju_watch.py tests/test_workload_watch.py tests/test_classify.py tests/integration/cache_check.py tests/fakes/lxc
 
       - name: pytest
         run: python3 -m pytest tests/
@@ -243,6 +243,79 @@ jobs:
             printf "metrics.json: %.1f MB over %.0fs => %.1f MB/30min uncompressed\n", raw/1048576, span, raw/1048576/span*1800
             printf "bundle:       %.2f MB (%.0fx smaller)\n", packed/1048576, raw/packed
           }'
+
+  cache:
+    # Flaky by design, to check classify: tests/integration/run.sh starves the
+    # runner, so a timing test misses its deadline. The neutral name and the
+    # script keep the cause out of what the model reads.
+    name: integration (cache)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Start collection
+        uses: ./.github/actions/collect
+        with:
+          phase: start
+
+      # continue-on-error, not `|| true`: the log must show a failed step, as a
+      # real failure would, while this job stays green.
+      - name: Run integration tests
+        continue-on-error: true
+        run: tests/integration/run.sh
+
+      - name: Stop collection
+        if: always()
+        uses: ./.github/actions/collect
+        with:
+          phase: stop
+
+  classify:
+    # The smoke and cache jobs pass even though their tests fail, so pick them
+    # by name instead of by conclusion. Without the secret the action skips.
+    name: classify
+    needs: [smoke, cache]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    # Job level: a step's own env is not available to its `if`.
+    env:
+      HAS_KEY: ${{ secrets.OPENROUTER_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Classify
+        id: classify
+        uses: ./.github/actions/classify
+        env:
+          FLAKE0_CLASSIFY_NAME_RE: "^(smoke |integration )"
+          FLAKE0_CLASSIFY_NO_DIFF: "1"
+        with:
+          openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+
+      - name: Assert each job got its bundle and the expected verdict
+        if: env.HAS_KEY == 'true'
+        env:
+          VERDICTS: ${{ steps.classify.outputs.verdicts-path }}
+          PROMPTS: ${{ runner.temp }}/flake0-classify
+        run: |
+          set -euxo pipefail
+          jq . "$VERDICTS"
+          jq -e 'length == 3' "$VERDICTS"
+          # every prompt found its bundle by runner_name and saw its failing test
+          for p in "$PROMPTS"/prompt-*.md; do
+            grep -q '^## Host metrics (collect bundle)' "$p"
+            grep -qE 'test_fail|test_cache_warmup_meets_deadline' "$p"
+          done
+          # A deadline missed on a starved runner is flaky. The model's answer
+          # varies and OpenRouter can fail, so a wrong verdict warns instead of
+          # failing: read the reasoning printed above. The smoke legs hide their
+          # failure behind `|| true`, so their verdict proves nothing.
+          jq -e 'any(.[]; (.job | startswith("integration ")) and .verdict == "flaky")' "$VERDICTS" \
+            || echo "::warning::classify did not call the starved integration (cache) job flaky"
 
   hostile-tags:
     # Regression test: tag values are passed to Telegraf through the environment
