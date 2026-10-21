@@ -25,6 +25,10 @@ inputs:
     description: "update: the classify step's verdict-path output"
     required: false
     default: ""
+  job-id:
+    description: "update: the job's job.check_run_id, so the comment links to its summary"
+    required: false
+    default: ""
   openrouter-api-key:
     description: "final: OpenRouter API key for the cross-job call. Empty posts the per-job verdicts."
     required: false
@@ -43,15 +47,23 @@ runs:
       env:
         VERDICT_PATH: ${{ inputs.verdict-path }}
         JOB_NAME: ${{ inputs.job-name }}
+        JOB_ID: ${{ inputs.job-id }}
         OUT: ${{ runner.temp }}/flake0-verdict
       run: |
         mkdir -p "$OUT"
-        if [ -n "$VERDICT_PATH" ] && [ -f "$VERDICT_PATH" ] && [ ! -L "$VERDICT_PATH" ]; then
-          cp "$VERDICT_PATH" "$OUT/verdict.json"
-        else
-          python3 -c 'import json, sys; print(json.dumps({"job": sys.argv[1], "error": "classify left no verdict"}))' \
-            "$JOB_NAME" > "$OUT/verdict.json"
-        fi
+        python3 - <<'EOF'
+        import json, os
+        src = os.environ["VERDICT_PATH"]
+        try:
+            verdict = json.load(open(src)) if os.path.isfile(src) and not os.path.islink(src) else None
+        except (OSError, ValueError, RecursionError):
+            verdict = None
+        if not isinstance(verdict, dict):
+            verdict = {"job": os.environ["JOB_NAME"], "error": "classify left no verdict"}
+        verdict["job_id"] = os.environ["JOB_ID"]
+        with open(os.path.join(os.environ["OUT"], "verdict.json"), "w") as fh:
+            json.dump(verdict, fh)
+        EOF
 
     - name: Upload the verdict
       if: ${{ inputs.mode == 'update' }}

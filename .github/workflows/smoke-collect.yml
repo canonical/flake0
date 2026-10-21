@@ -319,12 +319,60 @@ jobs:
           leg-id: cache
           job-name: integration (cache)
           verdict-path: ${{ steps.classify.outputs.verdict-path }}
+          job-id: ${{ job.check_run_id }}
+
+  demo:
+    # One failing test per remaining flake0 category, so each pull request shows
+    # a full summarize comment (integration (cache) is the flaky one): a charm
+    # bug (config), a test bug (units) and a job classify never sees (setup).
+    # Neutral names keep the answer out of what the model reads.
+    name: demo (${{ matrix.check }})
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [config, units, setup]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write # summarize's PR comment
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run the checks
+        id: test
+        continue-on-error: true
+        shell: bash
+        env:
+          CHECK: ${{ matrix.check }}
+        run: |
+          [ "$CHECK" != setup ] || { echo "could not prepare the test environment"; exit 1; }
+          python3 -m unittest discover -s "tests/demo/$CHECK" -p 'check_*.py' -v 2>&1 | tee "$RUNNER_TEMP/test.log"
+
+      - name: Classify
+        id: classify
+        if: ${{ steps.test.outcome == 'failure' && matrix.check != 'setup' }}
+        uses: ./.github/actions/classify
+        env:
+          FLAKE0_CLASSIFY_NO_DIFF: "1"
+        with:
+          openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+          log-path: ${{ runner.temp }}/test.log
+          job-name: demo (${{ matrix.check }})
+
+      - name: Update PR comment
+        if: ${{ steps.test.outcome == 'failure' && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
+        uses: ./.github/actions/summarize
+        with:
+          leg-id: demo-${{ matrix.check }}
+          job-name: demo (${{ matrix.check }})
+          verdict-path: ${{ steps.classify.outputs.verdict-path }}
+          job-id: ${{ job.check_run_id }}
 
   summary:
-    # summarize's final mode, after the job above. always(), not failure(): that
-    # job stays green, since its failing step is continue-on-error.
+    # summarize's final mode, after the jobs above. always(), not failure():
+    # those jobs stay green, since their failing steps are continue-on-error.
     name: PR comment (final)
-    needs: cache
+    needs: [cache, demo]
     if: ${{ always() && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
     runs-on: ubuntu-24.04
     permissions:
