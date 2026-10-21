@@ -1,0 +1,54 @@
+name: classify
+description: >-
+  Asks a model, through OpenRouter, whether this job failed from flakiness or a
+  real bug, from the test output and the collect bundle. Add it as the last step
+  of the test job. Part of the Flake0 AI debugging suite.
+author: canonical
+branding:
+  icon: help-circle
+  color: orange
+
+inputs:
+  openrouter-api-key:
+    description: "OpenRouter API key. Empty (e.g. on fork pull requests) skips classification."
+    required: true
+  log-path:
+    description: "File with the test output, e.g. from `2>&1 | tee`"
+    required: true
+  bundle-path:
+    description: "The collect stop phase's bundle-path output"
+    required: false
+    default: ""
+  job-name:
+    description: "Job name in the prompt and the summary"
+    required: false
+    default: ${{ github.job }}
+  model:
+    description: "OpenRouter model slug"
+    required: false
+    default: "z-ai/glm-5.3"
+  github-token:
+    description: "Token that can read the pull request diff"
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  verdict-path:
+    description: "Path to verdict.json, empty if there is none"
+    value: ${{ steps.run.outputs.verdict-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Classify failure
+      id: run
+      shell: bash
+      env:
+        OPENROUTER_API_KEY: ${{ inputs.openrouter-api-key }}
+        MODEL: ${{ inputs.model }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        LOG_PATH: ${{ inputs.log-path }}
+        BUNDLE_PATH: ${{ inputs.bundle-path }}
+        JOB_NAME: ${{ inputs.job-name }}
+      run: "$GITHUB_ACTION_PATH/scripts/run.sh"

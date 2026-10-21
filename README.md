@@ -43,6 +43,35 @@ dashboard PNG straight from a `collect` bundle, with zero configuration:
 
 See [`.github/actions/plot/README.md`](.github/actions/plot/README.md) for details.
 
+The `classify` action (`.github/actions/classify`) asks a model, through OpenRouter, whether a
+failed job failed from flakiness or a real bug. It reads the test output, the `collect` bundle
+and the pull request diff. Add it as the last step of the test job:
+
+```yaml
+- name: Run tests
+  shell: bash  # adds pipefail, so the step keeps the test's exit code
+  run: tox -e integration 2>&1 | tee "$RUNNER_TEMP/test.log"
+- name: Stop telemetry
+  id: collect
+  if: always()
+  uses: canonical/flake0/.github/actions/collect@main
+  with:
+    phase: stop
+- name: Classify failure
+  if: failure()
+  uses: canonical/flake0/.github/actions/classify@main
+  with:
+    openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+    log-path: ${{ runner.temp }}/test.log
+    bundle-path: ${{ steps.collect.outputs.bundle-path }}
+```
+
+See [`.github/actions/classify/README.md`](.github/actions/classify/README.md) for details.
+
+The `summarize` action (`.github/actions/summarize`) posts the verdicts of all failed jobs of a run
+as one pull request comment, grouped into charm bugs, test issues and flakiness. See
+[`.github/actions/summarize/README.md`](.github/actions/summarize/README.md).
+
 ## Community and support
 
 Flake0 is an open-source project that welcomes community contributions, suggestions, fixes and constructive feedback.

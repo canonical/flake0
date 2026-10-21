@@ -1,0 +1,283 @@
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+_SCRIPT_PATH = (
+    Path(__file__).resolve().parent.parent
+    / ".github"
+    / "actions"
+    / "classify"
+    / "scripts"
+    / "classify.py"
+)
+_spec = importlib.util.spec_from_file_location("classify", _SCRIPT_PATH)
+classify = importlib.util.module_from_spec(_spec)
+sys.modules["classify"] = classify
+_spec.loader.exec_module(classify)
+
+
+def _metric(name, tags, fields, ts):
+    return {"name": name, "tags": tags, "fields": fields, "timestamp": ts}
+
+
+def _bundle(path, metrics):
+    path.mkdir()
+    (path / "metrics.json").write_text(json.dumps({"metrics": metrics}) + "\n")
+    return path
+
+
+def _main_args(tmp_path):
+    (tmp_path / "test.log").write_text("FAILED test_x - AssertionError\n")
+    args = ["--job", "smoke", "--log", str(tmp_path / "test.log"), "--bundle", str(tmp_path / "bundle")]
+    return args + ["--out", str(tmp_path / "out"), "--model", "m"]
+
+
+def test_clip_keeps_head_and_tail():
+    text = "a" * 50 + "b" * 50
+    out = classify.clip(text, 20)
+    assert out.startswith("a" * 10)
+    assert out.endswith("b" * 10)
+    assert "80 characters cut" in out
+    assert classify.clip("short", 20) == "short"
+
+
+def test_excerpt_keeps_the_last_matches_before_the_tail(tmp_path):
+    log = tmp_path / "job.log"
+    # setup noise matches too, and must not push the test failure out
+    lines = ["Error: apt noise"] * 150 + ["\x1b[31mFAILED test_x\x1b[0m"] + ["dump"] * 400
+    lines[0] = "2026-10-02T13:42:32.2534341Z Error: apt noise"
+    log.write_text("\n".join(lines))
+    out = classify.excerpt(log, tail=300, max_hits=10)
+    assert "FAILED test_x" in out
+    assert "\x1b" not in out
+    assert "last 10 of 151 matching lines" in out
+    short = classify.excerpt(log, tail=1000)
+    assert short.splitlines()[1] == "13:42:32 Error: apt noise"
+
+
+def test_summarize_metrics_picks_the_right_series(tmp_path):
+    bundle = _bundle(
+        tmp_path / "b",
+        [
+            _metric("pressure", {"resource": "cpu", "type": "some"}, {"avg10": 5.0}, 1_000),
+            _metric("pressure", {"resource": "cpu", "type": "some"}, {"avg10": 80.0}, 3_000),
+            # a hostile or odd value is skipped, not summed
+            _metric("pressure", {"resource": "cpu", "type": "some"}, {"avg10": "x"}, 3_500),
+            # another resource must not leak into the cpu line
+            _metric("pressure", {"resource": "io", "type": "some"}, {"avg10": 99.0}, 2_000),
+            _metric("disk", {"path": "/"}, {"used_percent": 97.5, "inodes_free": 12}, 2_000),
+            _metric("nstat", {}, {"TcpRetransSegs": 10}, 1_000),
+            _metric("nstat", {}, {"TcpRetransSegs": 25}, 3_000),
+        ],
+    )
+    summary = classify.summarize_metrics(classify.load_metrics(bundle))
+    assert "PSI cpu some avg10 %: min 5.0, mean 42.5, p95 80.0, max 80.0 at 00:00:03Z (2 samples)" in summary
+    assert "PSI io some avg10 %: min 99.0" in summary
+    assert "Disk / inodes free: min 12" in summary
+    assert "TCP retransmitted segments during the run: 15" in summary
+
+
+def test_load_metrics_skips_malformed_records(tmp_path):
+    (tmp_path / "metrics.json").write_text(
+        '{"metrics": [{"name": "mem", "tags": [], "fields": {}, "timestamp": 1}]}\n'
+        '{"metrics": null}\n[1]\n{"trunc'
+    )
+    (tmp_path / "metrics2.json").mkdir()  # unreadable as a file
+    assert classify.load_metrics(tmp_path) == {}
+
+
+def test_unit_timeline_lists_each_status_change(tmp_path):
+    def snap(ts, workload, msg=""):
+        unit = {"workload-status": {"current": workload, "message": msg}, "juju-status": {"current": "idle"}}
+        return json.dumps({"ts": ts, "status": {"applications": {"valkey": {"units": {"valkey/0": unit}}}}})
+
+    status = tmp_path / "juju-status-root-c-m.ndjson"
+    lines = [snap("t1", "maintenance"), snap("t2", "maintenance"), snap("t3", "error", "hook failed")]
+    router = {"workload-status": {"current": "error"}, "juju-status": {"current": "idle"}}
+    principal = {"workload-status": {"current": "error", "message": "hook failed"}, "juju-status": {"current": "idle"}}
+    principal["subordinates"] = {"router/0": router}
+    lines.append(json.dumps({"ts": "t3b", "status": {"applications": {"valkey": {"units": {"valkey/0": principal}}}}}))
+    # a torn-down model, a hostile shape and a line truncated by a killed watcher
+    lines += [json.dumps({"ts": "t4", "status": {"applications": {}}}), '{"status": {"applications": {"a": []}}}', '{"ts": "t5", "sta']
+    status.write_text("\n".join(lines))
+    assert classify.unit_timeline(status) == [
+        "t1 valkey/0: workload maintenance (), agent idle",
+        "t3 valkey/0: workload error (hook failed), agent idle",
+        "t3b router/0: workload error (), agent idle",
+    ]
+
+
+def test_top_processes_reports_peaks_and_restarts():
+    mib = 2**20
+    procstat = [
+        _metric("procstat", {"process_name": "mongod"}, {"pid": 10, "memory_rss": 900 * mib, "cpu_usage": 50.0}, 1_000),
+        _metric("procstat", {"process_name": "mongod"}, {"pid": 10, "memory_rss": 1200 * mib, "cpu_usage": 20.0}, 2_000),
+        # restarted: a second pid
+        _metric("procstat", {"process_name": "mongod"}, {"pid": 11, "memory_rss": 100 * mib, "cpu_usage": 5.0}, 3_000),
+        _metric("procstat", {"process_name": "jujud"}, {"pid": 20, "memory_rss": 50 * mib, "cpu_usage": 190.0}, 3_000),
+        # never busy: its peak CPU time is its first sample, not the epoch
+        _metric("procstat", {"process_name": "tail"}, {"pid": 30, "memory_rss": 1 * mib, "cpu_usage": 0.0}, 4_000),
+    ]
+    assert "peak CPU 0% at 00:00:04Z" in classify.top_processes({"procstat": procstat})
+    out = classify.top_processes({"procstat": procstat}, n=1).splitlines()
+    assert out == [
+        "mongod (pid 10): peak RSS 1200 MB at 00:00:02Z, peak CPU 50% at 00:00:01Z",
+        "jujud (pid 20): peak RSS 50 MB at 00:00:03Z, peak CPU 190% at 00:00:03Z",
+        "Pids seen per process name (a restarted process or a new log follower gets a new pid): mongod: 2",
+    ]
+
+
+def test_build_prompt_clips_each_section():
+    prompt = classify.build_prompt("integration", "L" * 200_000, None, "D" * 200_000)
+    assert len(prompt) <= classify.PROMPT_BUDGET
+    assert "no collect bundle" in prompt
+    assert prompt.count("characters cut") == 2
+
+
+def test_parse_verdict_keeps_only_known_keys_and_types():
+    good = classify.parse_verdict('```json\n{"verdict": "FLAKY", "root_cause": "environment_infra", "confidence_pct": 80}\n```')
+    assert good["verdict"] == "FLAKY"
+    assert good["recommendation"] == "retry_safe"
+    assert (good["confidence_pct"], good["confidence_bucket"]) == (80, "high")
+    hostile = classify.parse_verdict(json.dumps({
+        "verdict": "REAL_FAILURE", "root_cause": "rm -rf", "job": "spoofed", "confidence_pct": "high",
+        "reasoning": ["a"], "evidence": "one", "failed_tests": "test_a", "recommendation": "block_merge",
+    }))
+    assert "job" not in hostile
+    assert hostile["root_cause"] == "unknown"
+    # derived from the pair, never taken from the reply
+    assert hostile["recommendation"] == "needs_human_review"
+    assert hostile["confidence_pct"] is None
+    assert hostile["reasoning"] == "['a']"
+    assert hostile["evidence"] == ["one"]
+    assert hostile["failed_tests"] == ["test_a"]
+    assert classify.parse_verdict('{"verdict": "FLAKY", "confidence_pct": NaN}')["confidence_pct"] is None
+    assert classify.parse_verdict('{"verdict": "FLAKY", "confidence_pct": 700}')["confidence_pct"] is None
+    assert classify.parse_verdict('{"verdict": "FLAKY", "confidence_pct": 49.6}')["confidence_bucket"] == "medium"
+    bad = classify.parse_verdict("I think it is flaky")
+    assert bad["verdict"] == "INCONCLUSIVE"
+    assert bad["raw"] == "I think it is flaky"
+    assert classify.parse_verdict('{"verdict": "flaky"}')["verdict"] == "INCONCLUSIVE"
+    assert classify.parse_verdict([{"type": "text"}])["verdict"] == "INCONCLUSIVE"
+
+
+def test_recommendation_follows_the_taxonomy_table():
+    assert classify.recommendation("FLAKY", "code_regression") == "block_merge"
+    assert classify.recommendation("REAL_FAILURE", "test_defect") == "fix_test"
+    assert classify.recommendation("INCONCLUSIVE", "external_service") == "retry_safe"
+    assert classify.recommendation("REAL_FAILURE", "environment_infra") == "needs_human_review"
+
+
+def test_main_writes_verdict_and_summary(tmp_path, monkeypatch):
+    args = _main_args(tmp_path)
+    _bundle(tmp_path / "bundle", [_metric("mem", {}, {"available_percent": 3.0}, 1_000)])
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    seen = {}
+
+    def fake_call(prompt, model, key):
+        seen["prompt"] = prompt
+        return json.dumps({"verdict": "REAL_FAILURE", "root_cause": "test_defect", "confidence_pct": 90,
+                           "reasoning": "r", "evidence": ["e"], "suggested_fix": "wait longer"})
+
+    monkeypatch.setattr(classify, "call_openrouter", fake_call)
+    assert classify.main([*args, "--diff", str(tmp_path / "none")]) == 0
+    assert "FAILED test_x" in seen["prompt"]
+    assert "Memory available %: min 3.0" in seen["prompt"]
+    assert (tmp_path / "out" / "prompt.md").read_text() == seen["prompt"]
+    verdict = json.loads((tmp_path / "out" / "verdict.json").read_text())
+    assert verdict["verdict"] == "REAL_FAILURE"
+    assert verdict["model"] == "m"
+    assert verdict["job"] == "smoke"
+    assert "| smoke | **REAL_FAILURE** | test_defect | 90 (high) | fix_test |" in summary.read_text()
+    assert "Suggested fix: wait longer" in summary.read_text()
+    piped = classify.summary_markdown({"job": "k8s/test_x | arm64", "verdict": "FLAKY"})
+    assert "| k8s/test_x \\| arm64 | **FLAKY** |" in piped
+
+
+def test_main_writes_a_verdict_when_the_call_fails(tmp_path, monkeypatch):
+    def fake_call(prompt, model, key):
+        raise TypeError("'NoneType' object is not subscriptable")
+
+    monkeypatch.setattr(classify, "call_openrouter", fake_call)
+    # in CI the real job summary would get this fake verdict
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    # no log and no bundle either
+    assert classify.main(["--out", str(tmp_path / "out"), "--model", "m", "--log", str(tmp_path / "none")]) == 0
+    verdict = json.loads((tmp_path / "out" / "verdict.json").read_text())
+    assert verdict["verdict"] == "INCONCLUSIVE"
+    assert verdict["error"].startswith("TypeError")
+    assert "(test output unavailable)" in (tmp_path / "out" / "prompt.md").read_text()
+    assert "TypeError" in summary.read_text()
+
+
+def test_main_survives_a_hostile_bundle(tmp_path, monkeypatch):
+    args = _main_args(tmp_path)
+    hostile = tmp_path / "bundle"
+    hostile.mkdir()
+    (hostile / "metrics.json").write_text(
+        '{"metrics": [{"name": ["x"], "tags": {}, "fields": {}, "timestamp": 1}]}\n'
+        + '{"metrics": [' + "9" * 5000 + "]}\n"
+        + "[" * 100_000 + "\n"
+        # a timestamp no clock can format
+        + json.dumps({"metrics": [_metric("mem", {}, {"available_percent": 1.0}, 1e20)]}) + "\n"
+    )
+    seen = {}
+
+    def fake_call(prompt, model, key):
+        seen["prompt"] = prompt
+        return '{"verdict": "FLAKY", "root_cause": "environment_infra", "confidence_pct": 0}'
+
+    monkeypatch.setattr(classify, "call_openrouter", fake_call)
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    assert classify.main(args) == 0
+    assert "FAILED test_x" in seen["prompt"]
+    assert "the collect bundle could not be read" in seen["prompt"]
+    assert json.loads((tmp_path / "out" / "verdict.json").read_text())["verdict"] == "FLAKY"
+    assert "| smoke | **FLAKY** | environment_infra | 0 (low) | retry_safe |" in summary.read_text()
+
+
+def test_call_openrouter_retries_dropped_connections(monkeypatch):
+    calls = []
+
+    class Reply:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b'{"choices": [{"message": {"content": "ok"}}]}'
+
+    def fake_urlopen(req, timeout):
+        calls.append(req)
+        if len(calls) == 1:
+            raise classify.URLError("[SSL: UNEXPECTED_EOF_WHILE_READING]")
+        if len(calls) == 2:
+            raise classify.HTTPError(req.full_url, 502, "Bad Gateway", {}, None)
+        return Reply()
+
+    monkeypatch.setattr(classify, "urlopen", fake_urlopen)
+    monkeypatch.setattr(classify.time, "sleep", lambda s: None)
+    assert classify.call_openrouter("p", "m", "k") == "ok"
+    assert len(calls) == 3
+
+
+def test_call_openrouter_does_not_retry_a_bad_key(monkeypatch):
+    calls = []
+
+    def fake_urlopen(req, timeout):
+        calls.append(req)
+        raise classify.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(classify, "urlopen", fake_urlopen)
+    monkeypatch.setattr(classify.time, "sleep", lambda s: None)
+    with pytest.raises(classify.HTTPError):
+        classify.call_openrouter("p", "m", "k")
+    assert len(calls) == 1

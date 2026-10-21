@@ -1,0 +1,92 @@
+name: summarize
+description: >-
+  Posts one comment per run on the pull request with the classify verdicts of
+  all failed jobs, grouped by bucket, and keeps it up to date while the run
+  goes on. Part of the Flake0 AI debugging suite.
+author: canonical
+branding:
+  icon: message-square
+  color: orange
+
+inputs:
+  mode:
+    description: "`update` in each failed job, after classify. `final` in one job after all test jobs."
+    required: false
+    default: update
+  leg-id:
+    description: "update: unique per matrix entry, used in the verdict artifact name"
+    required: false
+    default: ${{ github.job }}
+  job-name:
+    description: "update: job name for the comment when classify left no verdict"
+    required: false
+    default: ${{ github.job }}
+  verdict-path:
+    description: "update: the classify step's verdict-path output"
+    required: false
+    default: ""
+  job-id:
+    description: "update: the job's job.check_run_id, so the comment links to its summary"
+    required: false
+    default: ""
+  openrouter-api-key:
+    description: "final: OpenRouter API key for the cross-job call. Empty posts the per-job verdicts."
+    required: false
+    default: ""
+  model:
+    description: "final: OpenRouter model slug"
+    required: false
+    default: "z-ai/glm-5.3"
+
+runs:
+  using: composite
+  steps:
+    - name: Write the verdict
+      if: ${{ inputs.mode == 'update' }}
+      shell: bash
+      env:
+        VERDICT_PATH: ${{ inputs.verdict-path }}
+        JOB_NAME: ${{ inputs.job-name }}
+        JOB_ID: ${{ inputs.job-id }}
+        OUT: ${{ runner.temp }}/flake0-verdict
+      run: |
+        mkdir -p "$OUT"
+        python3 - <<'EOF'
+        import json, os
+        src = os.environ["VERDICT_PATH"]
+        try:
+            verdict = json.load(open(src)) if os.path.isfile(src) and not os.path.islink(src) else None
+        except (OSError, ValueError, RecursionError):
+            verdict = None
+        if not isinstance(verdict, dict):
+            verdict = {"job": os.environ["JOB_NAME"], "error": "classify left no verdict"}
+        verdict["job_id"] = os.environ["JOB_ID"]
+        with open(os.path.join(os.environ["OUT"], "verdict.json"), "w") as fh:
+            json.dump(verdict, fh)
+        EOF
+
+    - name: Upload the verdict
+      if: ${{ inputs.mode == 'update' }}
+      continue-on-error: true
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: flake0-verdict-${{ inputs.leg-id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/flake0-verdict/verdict.json
+
+    # Each artifact lands in its own directory, so equal file names don't clash
+    - name: Download the verdicts of this run
+      continue-on-error: true
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      with:
+        pattern: flake0-verdict-*-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/flake0-verdicts
+
+    - name: Post the comment
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        OPENROUTER_API_KEY: ${{ inputs.openrouter-api-key }}
+        MODEL: ${{ inputs.model }}
+        GH_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: "$GITHUB_ACTION_PATH/scripts/run.sh"
