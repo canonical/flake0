@@ -24,7 +24,8 @@ ARGS=(--verdicts "$VERDICTS" --marker "$MARKER" --out "$WORK/body.md"
 
 if [ "${MODE:-update}" = final ]; then
   ARGS+=(--final --model "${MODEL:-}" --diff "$WORK/diff.patch")
-  if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+  # FLAKE0_CLASSIFY_NO_DIFF: see classify's run.sh
+  if [ -n "${OPENROUTER_API_KEY:-}" ] && [ -z "${FLAKE0_CLASSIFY_NO_DIFF:-}" ]; then
     gh pr diff "$PR_NUMBER" -R "$REPO" > "$WORK/diff.patch" \
       || echo "flake0-summarize: could not fetch the diff of #$PR_NUMBER" >&2
   fi
