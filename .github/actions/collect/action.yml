@@ -126,8 +126,10 @@ runs:
 
     # Path comes from the stop step rather than being restated here: the bundle
     # extension changes when zstd is unavailable.
+    # continue-on-error: a failed upload (ECONNRESET happens) must not fail a job whose tests passed
     - name: Upload collect bundle
       if: ${{ always() && inputs.phase == 'stop' && steps.stop.outputs.bundle-path != '' }}
+      continue-on-error: true
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
         name: ${{ steps.resolve.outputs.artifact-name }}

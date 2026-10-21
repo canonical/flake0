@@ -175,6 +175,8 @@ def test_main_writes_verdict_and_summary(tmp_path, monkeypatch):
     assert verdict["model"] == "m"
     assert verdict["job"] == "smoke"
     assert "| smoke | **real** | 0.9 | test-bug |" in summary.read_text()
+    piped = classify.summary_markdown({"job": "k8s/test_x | arm64", "verdict": "flaky", "category": "a|b"})
+    assert "| k8s/test_x \\| arm64 | **flaky** |  | a\\|b |" in piped
 
 
 def test_main_writes_a_verdict_when_the_call_fails(tmp_path, monkeypatch):
@@ -182,12 +184,16 @@ def test_main_writes_a_verdict_when_the_call_fails(tmp_path, monkeypatch):
         raise TypeError("'NoneType' object is not subscriptable")
 
     monkeypatch.setattr(classify, "call_openrouter", fake_call)
+    # in CI the real job summary would get this fake verdict
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
     # no log and no bundle either
     assert classify.main(["--out", str(tmp_path / "out"), "--model", "m", "--log", str(tmp_path / "none")]) == 0
     verdict = json.loads((tmp_path / "out" / "verdict.json").read_text())
     assert verdict["verdict"] == "inconclusive"
     assert verdict["error"].startswith("TypeError")
     assert "(test output unavailable)" in (tmp_path / "out" / "prompt.md").read_text()
+    assert "TypeError" in summary.read_text()
 
 
 def test_main_survives_a_hostile_bundle(tmp_path, monkeypatch):

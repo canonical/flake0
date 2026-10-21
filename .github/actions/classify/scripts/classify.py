@@ -343,8 +343,10 @@ def parse_verdict(content):
 
 def summary_markdown(r):
     confidence = "" if r.get("confidence") is None else r["confidence"]
+    # Matrix job names hold a '|', which would split a table cell
+    job, category = (str(v).replace("|", "\\|") for v in (r["job"], r.get("category", "")))
     rows = ["## flake0 classify", "", "| Job | Verdict | Confidence | Category |", "|---|---|---|---|"]
-    rows += [f"| {r['job']} | **{r['verdict']}** | {confidence} | {r.get('category', '')} |", ""]
+    rows += [f"| {job} | **{r['verdict']}** | {confidence} | {category} |", ""]
     rows += [r.get("reasoning") or r.get("error") or "(no reasoning)"]
     rows += [f"- {e}" for e in r.get("evidence") or []]
     return "\n".join(rows) + "\n"
@@ -372,6 +374,8 @@ def main(argv=None):
         verdict = {"verdict": "inconclusive", "error": f"{type(exc).__name__}: {exc}"}
     result = {"job": args.job, "model": args.model, **verdict}
     print(f"classify: {args.job}: {verdict['verdict']}")
+    # The API serves job logs but not job summaries
+    print(json.dumps(result, indent=2))
 
     Path(args.out, "verdict.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
