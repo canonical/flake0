@@ -141,7 +141,8 @@ def code(text, limit=120):
 
 def test_link(group, run_url):
     """The failed tests (or the job) as a link to the job's summary on the run page."""
-    name = ", ".join(code(t) for t in group["failed_tests"][:3]) or code(group["label"])
+    # The job name, not the model's test file, when no test is named: setup failures name none
+    name = ", ".join(code(t) for t in group["failed_tests"][:3]) or code((group["jobs"] or [group["label"]])[0])
     # | would split the table cell, even inside a code span
     link = f"[`{name}`]({run_url}#summary-{group['job_id']})" if group["job_id"] else f"`{name}`"
     link = link.replace("|", "\\|")

@@ -72,7 +72,7 @@ def test_update_with_no_verdicts_posts_nothing(tmp_path):
 
 
 def test_final_groups_jobs_and_may_overrule(tmp_path, monkeypatch):
-    _verdicts(tmp_path, AMD, ARM, TLS)
+    _verdicts(tmp_path, AMD, ARM, TLS, {"job": "demo (setup)", "error": "classify left no verdict"})
     seen = {}
 
     def fake_call(prompt, model, key, system):
@@ -81,6 +81,8 @@ def test_final_groups_jobs_and_may_overrule(tmp_path, monkeypatch):
             {"test_file": "test_ha.py", "jobs": [AMD["job"], ARM["job"], "spoofed | job"],
              "failed_tests": ["test_build_and_deploy"], "verdict": "REAL_FAILURE", "root_cause": "test_defect",
              "summary": "Same empty charm URL on both arches.", "suggested_fix": "Build the charm first."},
+            # no test named: the job name shows, not the model's test file
+            {"test_file": "unknown", "jobs": ["demo (setup)"], "verdict": "INCONCLUSIVE", "root_cause": "unknown"},
             # a job the reply already used, and a non-dict, are ignored
             {"test_file": "dup.py", "jobs": [AMD["job"]], "verdict": "FLAKY", "root_cause": "environment_infra"},
             "junk",
@@ -102,6 +104,7 @@ def test_final_groups_jobs_and_may_overrule(tmp_path, monkeypatch):
     # left out of the reply: keeps its own verdict and link
     assert f"amd64`]({RUN_URL}#summary-42): Same-second certs." in body
     assert "spoofed" not in body and "dup.py" not in body
+    assert "| No verdict | 1 | `demo (setup)` |" in body
 
 
 def test_final_falls_back_to_per_job_verdicts(tmp_path, monkeypatch):
