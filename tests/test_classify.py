@@ -136,22 +136,37 @@ def test_build_prompt_clips_each_section():
 
 
 def test_parse_verdict_keeps_only_known_keys_and_types():
-    good = classify.parse_verdict('```json\n{"verdict": "flaky", "confidence": 0.8}\n```')
-    assert good["verdict"] == "flaky"
-    assert good["confidence"] == 0.8
-    hostile = classify.parse_verdict(
-        json.dumps({"verdict": "real", "job": "spoofed", "confidence": "high", "reasoning": ["a"], "evidence": "one"})
-    )
+    good = classify.parse_verdict('```json\n{"verdict": "FLAKY", "root_cause": "environment_infra", "confidence_pct": 80}\n```')
+    assert good["verdict"] == "FLAKY"
+    assert good["recommendation"] == "retry_safe"
+    assert (good["confidence_pct"], good["confidence_bucket"]) == (80, "high")
+    hostile = classify.parse_verdict(json.dumps({
+        "verdict": "REAL_FAILURE", "root_cause": "rm -rf", "job": "spoofed", "confidence_pct": "high",
+        "reasoning": ["a"], "evidence": "one", "failed_tests": "test_a", "recommendation": "block_merge",
+    }))
     assert "job" not in hostile
-    assert hostile["confidence"] is None
+    assert hostile["root_cause"] == "unknown"
+    # derived from the pair, never taken from the reply
+    assert hostile["recommendation"] == "needs_human_review"
+    assert hostile["confidence_pct"] is None
     assert hostile["reasoning"] == "['a']"
     assert hostile["evidence"] == ["one"]
-    assert classify.parse_verdict('{"verdict": "flaky", "confidence": NaN}')["confidence"] is None
-    assert classify.parse_verdict('{"verdict": "flaky", "confidence": 7}')["confidence"] is None
+    assert hostile["failed_tests"] == ["test_a"]
+    assert classify.parse_verdict('{"verdict": "FLAKY", "confidence_pct": NaN}')["confidence_pct"] is None
+    assert classify.parse_verdict('{"verdict": "FLAKY", "confidence_pct": 700}')["confidence_pct"] is None
+    assert classify.parse_verdict('{"verdict": "FLAKY", "confidence_pct": 49.6}')["confidence_bucket"] == "medium"
     bad = classify.parse_verdict("I think it is flaky")
-    assert bad == {"verdict": "inconclusive", "raw": "I think it is flaky"}
-    assert classify.parse_verdict('{"verdict": "maybe"}')["verdict"] == "inconclusive"
-    assert classify.parse_verdict([{"type": "text"}])["verdict"] == "inconclusive"
+    assert bad["verdict"] == "INCONCLUSIVE"
+    assert bad["raw"] == "I think it is flaky"
+    assert classify.parse_verdict('{"verdict": "flaky"}')["verdict"] == "INCONCLUSIVE"
+    assert classify.parse_verdict([{"type": "text"}])["verdict"] == "INCONCLUSIVE"
+
+
+def test_recommendation_follows_the_taxonomy_table():
+    assert classify.recommendation("FLAKY", "code_regression") == "block_merge"
+    assert classify.recommendation("REAL_FAILURE", "test_defect") == "fix_test"
+    assert classify.recommendation("INCONCLUSIVE", "external_service") == "retry_safe"
+    assert classify.recommendation("REAL_FAILURE", "environment_infra") == "needs_human_review"
 
 
 def test_main_writes_verdict_and_summary(tmp_path, monkeypatch):
@@ -163,7 +178,8 @@ def test_main_writes_verdict_and_summary(tmp_path, monkeypatch):
 
     def fake_call(prompt, model, key):
         seen["prompt"] = prompt
-        return '{"verdict": "real", "confidence": 0.9, "category": "test-bug", "reasoning": "r", "evidence": ["e"]}'
+        return json.dumps({"verdict": "REAL_FAILURE", "root_cause": "test_defect", "confidence_pct": 90,
+                           "reasoning": "r", "evidence": ["e"], "suggested_fix": "wait longer"})
 
     monkeypatch.setattr(classify, "call_openrouter", fake_call)
     assert classify.main([*args, "--diff", str(tmp_path / "none")]) == 0
@@ -171,12 +187,13 @@ def test_main_writes_verdict_and_summary(tmp_path, monkeypatch):
     assert "Memory available %: min 3.0" in seen["prompt"]
     assert (tmp_path / "out" / "prompt.md").read_text() == seen["prompt"]
     verdict = json.loads((tmp_path / "out" / "verdict.json").read_text())
-    assert verdict["verdict"] == "real"
+    assert verdict["verdict"] == "REAL_FAILURE"
     assert verdict["model"] == "m"
     assert verdict["job"] == "smoke"
-    assert "| smoke | **real** | 0.9 | test-bug |" in summary.read_text()
-    piped = classify.summary_markdown({"job": "k8s/test_x | arm64", "verdict": "flaky", "category": "a|b"})
-    assert "| k8s/test_x \\| arm64 | **flaky** |  | a\\|b |" in piped
+    assert "| smoke | **REAL_FAILURE** | test_defect | 90 (high) | fix_test |" in summary.read_text()
+    assert "Suggested fix: wait longer" in summary.read_text()
+    piped = classify.summary_markdown({"job": "k8s/test_x | arm64", "verdict": "FLAKY"})
+    assert "| k8s/test_x \\| arm64 | **FLAKY** |" in piped
 
 
 def test_main_writes_a_verdict_when_the_call_fails(tmp_path, monkeypatch):
@@ -190,7 +207,7 @@ def test_main_writes_a_verdict_when_the_call_fails(tmp_path, monkeypatch):
     # no log and no bundle either
     assert classify.main(["--out", str(tmp_path / "out"), "--model", "m", "--log", str(tmp_path / "none")]) == 0
     verdict = json.loads((tmp_path / "out" / "verdict.json").read_text())
-    assert verdict["verdict"] == "inconclusive"
+    assert verdict["verdict"] == "INCONCLUSIVE"
     assert verdict["error"].startswith("TypeError")
     assert "(test output unavailable)" in (tmp_path / "out" / "prompt.md").read_text()
     assert "TypeError" in summary.read_text()
@@ -211,7 +228,7 @@ def test_main_survives_a_hostile_bundle(tmp_path, monkeypatch):
 
     def fake_call(prompt, model, key):
         seen["prompt"] = prompt
-        return '{"verdict": "flaky", "confidence": 0}'
+        return '{"verdict": "FLAKY", "root_cause": "environment_infra", "confidence_pct": 0}'
 
     monkeypatch.setattr(classify, "call_openrouter", fake_call)
     summary = tmp_path / "summary.md"
@@ -219,5 +236,5 @@ def test_main_survives_a_hostile_bundle(tmp_path, monkeypatch):
     assert classify.main(args) == 0
     assert "FAILED test_x" in seen["prompt"]
     assert "the collect bundle could not be read" in seen["prompt"]
-    assert json.loads((tmp_path / "out" / "verdict.json").read_text())["verdict"] == "flaky"
-    assert "| smoke | **flaky** | 0 |" in summary.read_text()
+    assert json.loads((tmp_path / "out" / "verdict.json").read_text())["verdict"] == "FLAKY"
+    assert "| smoke | **FLAKY** | environment_infra | 0 (low) | retry_safe |" in summary.read_text()

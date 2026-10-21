@@ -68,6 +68,10 @@ and the pull request diff. Add it as the last step of the test job:
 
 See [`.github/actions/classify/README.md`](.github/actions/classify/README.md) for details.
 
+The `summarize` action (`.github/actions/summarize`) posts the verdicts of all failed jobs of a run
+as one pull request comment, grouped into charm bugs, test issues and flakiness. See
+[`.github/actions/summarize/README.md`](.github/actions/summarize/README.md).
+
 ## Community and support
 
 Flake0 is an open-source project that welcomes community contributions, suggestions, fixes and constructive feedback.

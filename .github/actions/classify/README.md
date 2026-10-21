@@ -1,7 +1,7 @@
 # Flake0 — classify action
 
-Asks a model, through [OpenRouter](https://openrouter.ai), whether a failed job failed from
-flakiness or from a real bug. It reads:
+Asks a model, through [OpenRouter](https://openrouter.ai), why a failed job failed, in the flake0
+taxonomy (flake0 PR #6, `docs/taxonomy.md`). It reads:
 
 - the test output, saved to a file with `tee`
 - the job's `collect` bundle: host metrics (PSI, CPU steal and iowait, memory, swap, disk,
@@ -69,12 +69,20 @@ A table in the job summary, and `verdict.json`:
 
 ```json
 {"job": "integration (lxd)", "model": "z-ai/glm-5.3",
- "verdict": "flaky", "confidence": 0.8, "category": "resource-starvation",
- "reasoning": "...", "evidence": ["Host metrics: PSI io some peaked at 74% ..."]}
+ "verdict": "FLAKY", "root_cause": "environment_infra", "recommendation": "retry_safe",
+ "confidence_pct": 80, "confidence_bucket": "high",
+ "failed_tests": ["test_cache_warmup_meets_deadline"], "summary": "...", "suggested_fix": "",
+ "error_excerpt": "...", "reasoning": "...", "evidence": ["Host metrics: PSI io some peaked at 74% ..."]}
 ```
 
-`verdict` is `flaky`, `real` or `inconclusive`. A reply that is not valid JSON becomes
-`inconclusive`, with the text in `raw`. The prompt is in `prompt.md` next to `verdict.json`.
+`verdict` is `REAL_FAILURE`, `FLAKY` or `INCONCLUSIVE`. `root_cause` is one of the taxonomy's
+categories, `unknown` when the model gives anything else. The action derives `recommendation`
+from the (verdict, root cause) pair with the taxonomy's table, and `confidence_bucket` from
+`confidence_pct`. A reply that is not valid JSON becomes `INCONCLUSIVE`, with the text in `raw`.
+The prompt is in `prompt.md` next to `verdict.json`.
+
+To post all verdicts of a run as one pull request comment, pass `verdict-path` to the
+[`summarize`](../summarize/README.md) action.
 
 ## Notes
 

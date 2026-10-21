@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: shellcheck
-        run: shellcheck -S style .github/actions/collect/scripts/*.sh .github/actions/plot/scripts/*.sh .github/actions/classify/scripts/*.sh tests/spread/*.sh tests/spread/lifecycle/check.sh tests/integration/run.sh tests/fakes/sudo
+        run: shellcheck -S style .github/actions/collect/scripts/*.sh .github/actions/plot/scripts/*.sh .github/actions/classify/scripts/*.sh .github/actions/summarize/scripts/*.sh tests/spread/*.sh tests/spread/lifecycle/check.sh tests/integration/run.sh tests/fakes/sudo
 
       # Pinned for version-determinism with the plot action's own runtime
       # interpreter -- not because Ubuntu 24.04's system Python is PEP
@@ -32,7 +32,7 @@ jobs:
           pip install ruff==0.16.7 pytest==9.1.1 -r .github/actions/plot/scripts/requirements.txt
 
       - name: ruff
-        run: ruff check .github/actions/plot/scripts/plot_telemetry.py .github/actions/classify/scripts/classify.py tests/test_juju_watch.py tests/test_workload_watch.py tests/test_classify.py tests/integration/cache_check.py tests/fakes/lxc
+        run: ruff check .github/actions/plot/scripts/plot_telemetry.py .github/actions/classify/scripts/classify.py tests/test_juju_watch.py tests/test_workload_watch.py tests/test_classify.py .github/actions/summarize/scripts/summarize.py tests/test_summarize.py tests/integration/cache_check.py tests/fakes/lxc
 
       - name: pytest
         run: python3 -m pytest tests/
@@ -306,7 +306,7 @@ jobs:
           # A deadline missed on a starved runner is flaky. The model's answer
           # varies and OpenRouter can fail, so a wrong verdict only warns. The
           # reasoning is printed above.
-          jq -e '.verdict == "flaky"' "$VERDICT" \
+          jq -e '.verdict == "FLAKY"' "$VERDICT" \
             || echo "::warning::classify did not call the starved integration (cache) job flaky"
 
   hostile-tags:
