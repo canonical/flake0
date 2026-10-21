@@ -83,6 +83,7 @@ def test_final_groups_jobs_and_may_overrule(tmp_path, monkeypatch):
         ]})
 
     monkeypatch.setattr(summarize.classify, "call_openrouter", fake_call)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     diff = tmp_path / "diff.patch"
     diff.write_text("+ change")
     rc, body = _run(tmp_path, "--final", "--model", "m", "--diff", str(diff))
@@ -131,7 +132,7 @@ def test_final_without_a_key_posts_per_job_verdicts(tmp_path, monkeypatch):
 def test_model_text_cannot_inject_markup(tmp_path):
     hostile = {"job": "j`<!-- x -->", "verdict": "REAL_FAILURE", "root_cause": "code_regression",
                "failed_tests": ["test_x[a-b]"],
-               "summary": "ping @team\n### Fake <img src=x> [approve](https://evil.example) ![t](p.png) o/r#1 www.evil.example",
+               "summary": "ping @team\n### Fake <img src=x> [approve](https://evil.example) ![t](p.png) o/r#1 www.evil.example &commat;team",
                "suggested_fix": "x" * 1000}
     _verdicts(tmp_path, hostile)
     _, body = _run(tmp_path)
@@ -139,6 +140,7 @@ def test_model_text_cannot_inject_markup(tmp_path):
     # code spans render nothing, so only the backtick changes
     assert "- `j'<!-- x -->`, `test_x[a-b]`: " in body
     assert "@team" not in body and "@\u200bteam" in body
+    assert "&amp;commat;team" in body
     assert "<img" not in body and "&lt;img" in body
     assert "\n### Fake" not in body
     assert "\\[approve\\]" in body

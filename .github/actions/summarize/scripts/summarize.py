@@ -120,7 +120,8 @@ def bucket(group):
 def safe(text, limit=300):
     """One line of plain text: no HTML, links, images, mentions or issue references, no code span to break out of."""
     text = " ".join(str(text).split())[:limit]
-    for raw, escaped in (("<", "&lt;"), (">", "&gt;"), ("[", "\\["), ("]", "\\]"), ("`", "'"),
+    # & first: entities like &commat; would render as the characters escaped below
+    for raw, escaped in (("&", "&amp;"), ("<", "&lt;"), (">", "&gt;"), ("[", "\\["), ("]", "\\]"), ("`", "'"),
                          ("@", "@\u200b"), ("#", "#\u200b"), ("://", ":\u200b//"), ("www.", "www\u200b.")):
         text = text.replace(raw, escaped)
     return text
