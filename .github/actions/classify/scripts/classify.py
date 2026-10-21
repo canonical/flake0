@@ -17,9 +17,11 @@ import json
 import math
 import os
 import re
+import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -354,8 +356,16 @@ def call_openrouter(prompt, model, key, system=SYSTEM_PROMPT):
         data=body,
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "X-Title": "flake0"},
     )
-    with urlopen(req, timeout=120) as resp:
-        return json.load(resp)["choices"][0]["message"]["content"]
+    # Runners drop connections now and then. Retry those, and 429 and 5xx, not a bad key or request.
+    for wait in (5, 15, None):
+        try:
+            with urlopen(req, timeout=120) as resp:
+                return json.load(resp)["choices"][0]["message"]["content"]
+        except (URLError, ConnectionError, TimeoutError) as exc:
+            if wait is None or (isinstance(exc, HTTPError) and exc.code < 500 and exc.code != 429):
+                raise
+            print(f"classify: OpenRouter call failed ({exc}), retrying in {wait}s")
+            time.sleep(wait)
 
 
 def parse_json(content):

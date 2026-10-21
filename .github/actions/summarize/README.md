@@ -66,6 +66,7 @@ flake0-summary:
   runs-on: ubuntu-latest
   permissions:
     pull-requests: write
+    actions: read  # logs of jobs that classify left without a verdict
   steps:
     - uses: canonical/flake0/.github/actions/summarize@main
       with:
@@ -73,7 +74,10 @@ flake0-summary:
         openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
 ```
 
-A failed job whose classify step was skipped or timed out still shows up, under "No verdict".
+A failed job whose classify step was skipped (it failed before its tests) or failed shows up
+under "No verdict" while the run goes on. The final job reads that job's log, which GitHub serves
+once the job is done, and classifies it with the rest. Without `actions: read` it stays "No
+verdict". If a reusable workflow holds the final job, its callers must grant `actions: read` too.
 Green runs, other events and fork pull requests (no secrets, so no verdicts) get no comment. A
 re-run attempt gets its own comment. The action never fails the job.
 

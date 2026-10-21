@@ -107,6 +107,32 @@ def test_final_groups_jobs_and_may_overrule(tmp_path, monkeypatch):
     assert "| No verdict | 1 | `demo (setup)` |" in body
 
 
+def test_final_classifies_jobs_without_a_verdict_from_their_log(tmp_path, monkeypatch):
+    setup = {"job": "k8s/test_backups.py | amd64", "job_id": "77", "error": "classify left no verdict"}
+    nolog = {"job": "k8s/test_x.py | amd64", "job_id": "78", "error": "classify left no verdict"}
+    _verdicts(tmp_path, setup, nolog, TLS)
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "77.log").write_text("2026-10-21T15:00:00.0000000Z error: snap \"go\" install failed: connection reset\n")
+    (logs / "42.log").write_text("TLS has a verdict, so its log is never read\n")
+    seen = {}
+
+    def fake_call(prompt, model, key, system):
+        seen["prompt"] = prompt
+        return json.dumps({"groups": [{"jobs": [setup["job"]], "verdict": "FLAKY", "root_cause": "external_service",
+                                       "summary": "snap store connection reset during setup."}]})
+
+    monkeypatch.setattr(summarize.classify, "call_openrouter", fake_call)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    rc, body = _run(tmp_path, "--final", "--logs", str(logs))
+    assert rc == 0
+    jobs = json.loads(seen["prompt"].split("\n", 1)[1])
+    assert 'snap "go" install failed' in jobs[0]["job_log"]
+    assert all("job_log" not in j for j in jobs[1:])
+    assert f"| Flaky | 1 | [`k8s/test_backups.py \\| amd64`]({RUN_URL}#summary-77) |" in body
+    assert f"| No verdict | 1 | [`k8s/test_x.py \\| amd64`]({RUN_URL}#summary-78) |" in body
+
+
 def test_final_falls_back_to_per_job_verdicts(tmp_path, monkeypatch):
     _verdicts(tmp_path, AMD)
 

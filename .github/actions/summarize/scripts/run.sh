@@ -29,6 +29,17 @@ if [ "${MODE:-update}" = final ]; then
     gh pr diff "$PR_NUMBER" -R "$REPO" > "$WORK/diff.patch" \
       || echo "flake0-summarize: could not fetch the diff of #$PR_NUMBER" >&2
   fi
+  # Jobs whose classify left no verdict (setup failures, failed calls) have
+  # finished by now, so their logs are served. Needs actions: read.
+  if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+    ARGS+=(--logs "$WORK/logs")
+    mkdir -p "$WORK/logs"
+    find "$VERDICTS" -name verdict.json -exec jq -r 'select(type == "object" and has("error")) | .job_id | strings' {} + 2>/dev/null \
+      | grep -xE '[0-9]+' | sort -u | while read -r id; do
+        gh api --allow-escape-sequences "repos/$REPO/actions/jobs/$id/logs" > "$WORK/logs/$id.log" 2>/dev/null \
+          || { rm -f "$WORK/logs/$id.log"; echo "flake0-summarize: could not fetch the log of job $id" >&2; }
+      done
+  fi
 fi
 
 python3 "${GITHUB_ACTION_PATH:?}/scripts/summarize.py" "${ARGS[@]}" || skip "summarize.py found nothing to post"

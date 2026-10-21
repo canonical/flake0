@@ -3,6 +3,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 _SCRIPT_PATH = (
     Path(__file__).resolve().parent.parent
     / ".github"
@@ -238,3 +240,44 @@ def test_main_survives_a_hostile_bundle(tmp_path, monkeypatch):
     assert "the collect bundle could not be read" in seen["prompt"]
     assert json.loads((tmp_path / "out" / "verdict.json").read_text())["verdict"] == "FLAKY"
     assert "| smoke | **FLAKY** | environment_infra | 0 (low) | retry_safe |" in summary.read_text()
+
+
+def test_call_openrouter_retries_dropped_connections(monkeypatch):
+    calls = []
+
+    class Reply:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b'{"choices": [{"message": {"content": "ok"}}]}'
+
+    def fake_urlopen(req, timeout):
+        calls.append(req)
+        if len(calls) == 1:
+            raise classify.URLError("[SSL: UNEXPECTED_EOF_WHILE_READING]")
+        if len(calls) == 2:
+            raise classify.HTTPError(req.full_url, 502, "Bad Gateway", {}, None)
+        return Reply()
+
+    monkeypatch.setattr(classify, "urlopen", fake_urlopen)
+    monkeypatch.setattr(classify.time, "sleep", lambda s: None)
+    assert classify.call_openrouter("p", "m", "k") == "ok"
+    assert len(calls) == 3
+
+
+def test_call_openrouter_does_not_retry_a_bad_key(monkeypatch):
+    calls = []
+
+    def fake_urlopen(req, timeout):
+        calls.append(req)
+        raise classify.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(classify, "urlopen", fake_urlopen)
+    monkeypatch.setattr(classify.time, "sleep", lambda s: None)
+    with pytest.raises(classify.HTTPError):
+        classify.call_openrouter("p", "m", "k")
+    assert len(calls) == 1
