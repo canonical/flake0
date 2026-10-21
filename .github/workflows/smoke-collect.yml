@@ -322,15 +322,17 @@ jobs:
           job-id: ${{ job.check_run_id }}
 
   demo:
-    # One failing test per remaining flake0 category, so each pull request shows
-    # a full summarize comment (integration (cache) is the flaky one): a charm
-    # bug (config), a test bug (units) and a job classify never sees (setup).
-    # Neutral names keep the answer out of what the model reads.
+    # One failing check per flake0 category, so each pull request shows a full
+    # summarize comment: a charm bug (config), a test bug (units), a download
+    # that times out before any test (setup, classified from its log by the
+    # final job) and a job with no verdict at all (quiet: no classify, and no
+    # job-id, so the final job can't read its log). integration (cache) is the
+    # flaky one. Neutral names keep the answer out of what the model reads.
     name: demo (${{ matrix.check }})
     strategy:
       fail-fast: false
       matrix:
-        check: [config, units, setup]
+        check: [config, units, setup, quiet]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -345,12 +347,15 @@ jobs:
         env:
           CHECK: ${{ matrix.check }}
         run: |
-          [ "$CHECK" != setup ] || { echo "could not prepare the test environment"; exit 1; }
-          python3 -m unittest discover -s "tests/demo/$CHECK" -p 'check_*.py' -v 2>&1 | tee "$RUNNER_TEMP/test.log"
+          case "$CHECK" in
+            setup) curl -fsS --max-time 20 -o charm.charm https://api.charmhub.io:81/v2/charms/download/opensearch ;;
+            quiet) exit 1 ;;
+            *) python3 -m unittest discover -s "tests/demo/$CHECK" -p 'check_*.py' -v 2>&1 | tee "$RUNNER_TEMP/test.log" ;;
+          esac
 
       - name: Classify
         id: classify
-        if: ${{ steps.test.outcome == 'failure' && matrix.check != 'setup' }}
+        if: ${{ steps.test.outcome == 'failure' && matrix.check != 'setup' && matrix.check != 'quiet' }}
         uses: ./.github/actions/classify
         env:
           FLAKE0_CLASSIFY_NO_DIFF: "1"
@@ -366,7 +371,7 @@ jobs:
           leg-id: demo-${{ matrix.check }}
           job-name: demo (${{ matrix.check }})
           verdict-path: ${{ steps.classify.outputs.verdict-path }}
-          job-id: ${{ job.check_run_id }}
+          job-id: ${{ matrix.check != 'quiet' && job.check_run_id || '' }}
 
   summary:
     # summarize's final mode, after the jobs above. always(), not failure():
