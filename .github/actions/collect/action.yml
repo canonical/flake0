@@ -46,6 +46,14 @@ inputs:
       Follow Juju and workload logs. 'false' collects host metrics only.
     required: false
     default: "true"
+  redact-values:
+    description: >-
+      Path to a file of secret values, one per line, to mask in collected Juju
+      and workload logs before they are bundled (e.g. write the job's known
+      credentials here). Best-effort secret patterns are always applied on top.
+      The file must be readable by the user running the 'stop' phase.
+    required: false
+    default: ""
   cache-telegraf:
     description: >-
       Cache the Telegraf binary between jobs. Avoids an ~82 MB download from
@@ -122,6 +130,7 @@ runs:
       env:
         FLAKE0_COLLECT_DIR: ${{ inputs.collect-dir }}
         BUNDLE_PATH: ${{ runner.temp }}/flake0-bundle.tar.zst
+        FLAKE0_REDACT_VALUES: ${{ inputs.redact-values }}
       run: "$GITHUB_ACTION_PATH/scripts/stop.sh"
 
     # Path comes from the stop step rather than being restated here: the bundle

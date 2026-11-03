@@ -104,6 +104,21 @@ if [ ${#SUDO[@]} -gt 0 ]; then
   "${SUDO[@]}" chown -R -h "$(id -u):$(id -g)" "$FLAKE0_COLLECT_DIR" 2>/dev/null || true
 fi
 
+# --- redact secrets before bundling --------------------------------------------
+# Workload journals/stdout and Juju debug logs carry whatever a workload printed,
+# secrets included. Mask them in place now that the watchers have stopped and the
+# files are owned by this user, before they enter the artifact. Metrics are left
+# untouched. Never fails the job; see redact.sh.
+REDACT="$(dirname "${BASH_SOURCE[0]}")/redact.sh"
+if [ -x "$REDACT" ]; then
+  REDACT_TARGETS=()
+  [ -d "$FLAKE0_COLLECT_DIR/workload" ] && REDACT_TARGETS+=("$FLAKE0_COLLECT_DIR/workload")
+  for f in "$FLAKE0_COLLECT_DIR"/juju-debug-*.log; do
+    [ -e "$f" ] && REDACT_TARGETS+=("$f")
+  done
+  [ ${#REDACT_TARGETS[@]} -gt 0 ] && "$REDACT" "${REDACT_TARGETS[@]}" || true
+fi
+
 # --- bundle --------------------------------------------------------------------
 # Name the file after what it actually contains: the previous version wrote gzip
 # into a .tar.zst path whenever zstd was missing.

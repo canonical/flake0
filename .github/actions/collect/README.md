@@ -38,6 +38,7 @@ exits 0.
 | `retention-days` | `14` | Artifact retention |
 | `collect-dir` | `$RUNNER_TEMP/flake0-collect` | Collection directory |
 | `logs` | `true` | Follow Juju and workload logs. `false` collects host metrics only. |
+| `redact-values` | `""` | Path to a file of secret values (one per line) to mask in collected logs before bundling. See [Workload logs](#workload-logs). |
 | `cache-telegraf` | `true` | Cache the binary between jobs, avoiding an ~82 MB download per run |
 
 ## Outputs
@@ -111,9 +112,23 @@ container exists, so it never installs or wakes LXD. Each file starts with
 `# flake0: connect <source> at <ts>`. A restarted container or a dropped journal replays from the
 top, after a new marker.
 
-Pod output and container journals land in the artifact as they are, so anything a workload prints,
-secrets included, becomes readable by anyone who can read the repo. Set `logs: false` to collect
-host metrics only.
+Pod output and container journals land in the artifact, so anything a workload prints could become
+readable by anyone who can read the repo. Before bundling, `stop` masks secrets in the collected
+Juju and workload logs (see [Redaction](#redaction)), but this is best-effort — set `logs: false` to
+collect host metrics only when logs may carry sensitive data you cannot enumerate.
+
+#### Redaction
+
+The `stop` phase rewrites the collected logs in place before they are bundled, masking:
+
+- every value listed in the `redact-values` file (one per line) — the reliable layer; point it at the
+  job's known credentials, e.g. values you would otherwise pass to `add-mask`.
+- common secret formats (`password=`, `token:`, auth schemes, JWTs, AWS keys, PEM private-key blocks)
+  via `scripts/redact.sed` — best-effort, so it will miss custom, encoded or split secrets.
+
+Logs are unredacted on the runner's disk while the job runs and only masked at `stop`, so treat the
+runner as trusted; the exposure this closes is the shared artifact. The Juju `*-status.ndjson` files
+are left untouched to keep them valid JSON.
 
 #### Memory footprint
 
