@@ -116,7 +116,9 @@ if [ -x "$REDACT" ]; then
   for f in "$FLAKE0_COLLECT_DIR"/juju-debug-*.log; do
     [ -e "$f" ] && REDACT_TARGETS+=("$f")
   done
-  [ ${#REDACT_TARGETS[@]} -gt 0 ] && "$REDACT" "${REDACT_TARGETS[@]}" || true
+  if [ ${#REDACT_TARGETS[@]} -gt 0 ]; then
+    "$REDACT" "${REDACT_TARGETS[@]}"
+  fi
 fi
 
 # --- bundle --------------------------------------------------------------------
