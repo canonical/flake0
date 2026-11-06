@@ -308,14 +308,15 @@ def juju_status_docs(files, bundle_id, tags):
         bad = 0
         for n, line in json_lines(files, rel):
             try:
-                status = line["status"]
-                doc = {"type": "juju_status", "bundle_id": bundle_id, "tag": tags, "@timestamp": line["ts"],
+                status, ts = line["status"], line["ts"]
+                doc = {"bundle_id": bundle_id, "tag": tags, "@timestamp": ts,
                        "controller": status["model"]["controller"], "model": status["model"]["name"],
                        "units": list(units(status)), "status": status}
+                index = f"ci-juju-status-{month(ts)}"
             except (KeyError, TypeError, AttributeError):
                 bad += 1
                 continue
-            yield "ci-meta", doc_id(bundle_id, rel, n), doc
+            yield index, doc_id(bundle_id, rel, n), doc
         if bad:
             warn(f"skipped {bad} badly shaped line{'s' * (bad > 1)} in {rel}")
 

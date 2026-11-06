@@ -77,31 +77,6 @@
               "type": "keyword"
             }
           }
-        },
-        "controller": {
-          "type": "keyword"
-        },
-        "model": {
-          "type": "keyword"
-        },
-        "units": {
-          "properties": {
-            "app": {
-              "type": "keyword"
-            },
-            "unit": {
-              "type": "keyword"
-            },
-            "workload_status": {
-              "type": "keyword"
-            },
-            "agent_status": {
-              "type": "keyword"
-            },
-            "message": {
-              "type": "text"
-            }
-          }
         }
       }
     }

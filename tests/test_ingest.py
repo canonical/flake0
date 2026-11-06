@@ -344,7 +344,9 @@ def test_juju_status_docs(tmp_path, capsys):
         + juju_status("2026-11-06T10:00:30.000Z", "error", 'hook failed: "start"')
         + '{"ts": "2026-11-06T10:01:00.000Z", "status": "x"}\n'
     )}))
-    docs = sorted((d for d in fake.of("ci-meta") if d["type"] == "juju_status"), key=lambda d: d["@timestamp"])
+    docs = sorted(fake.of("ci-juju-status-2026.11"), key=lambda d: d["@timestamp"])
+    assert all(d["type"] != "juju_status" for d in fake.of("ci-meta"))
+    assert "type" not in docs[0]
     assert [d["@timestamp"] for d in docs] == ["2026-11-06T10:00:00.000Z", "2026-11-06T10:00:30.000Z"]
     assert (docs[1]["controller"], docs[1]["model"], docs[1]["tag"]) == ("concierge-lxd", "testing", TAGS)
     assert docs[1]["units"] == [
@@ -389,7 +391,8 @@ def test_templates_and_mappings_installed_first(tmp_path, capsys):
     fake = load(write_bundle(tmp_path / "b"))
     puts = [p for _, p in fake.calls if p != "/_bulk"]
     assert puts == ["/_component_template/ci-logs-common"] + [
-        p for name, pattern in [*((f"ci-logs-{s}", f"ci-logs-{s}-*") for s in LOG_SOURCES),
+        p for name, pattern in [("ci-juju-status", "ci-juju-status-*"),
+                                *((f"ci-logs-{s}", f"ci-logs-{s}-*") for s in LOG_SOURCES),
                                 ("ci-meta", "ci-meta"), ("ci-metrics", "ci-metrics-*")]
         for p in (f"/_index_template/{name}", f"/{pattern}/_mapping")]
     # each log index gets the shared fields of the component template

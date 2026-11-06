@@ -61,7 +61,8 @@ TLS is always verified. There is no option to turn that off.
 |---|---|---|
 | `ci-metrics-YYYY.MM` | Telegraf metric | `metrics*.json` |
 | `ci-logs-<source>-YYYY.MM` | non-empty log line | every `*.log` file, one index per source below |
-| `ci-meta` | run, test attempt, and Juju status snapshot | `env-start.json`, `env-end.json`, `markers.ndjson`, `juju-status-*.ndjson` |
+| `ci-meta` | run, and test attempt | `env-start.json`, `env-end.json`, `markers.ndjson` |
+| `ci-juju-status-YYYY.MM` | Juju status snapshot | `juju-status-*.ndjson` |
 
 The month comes from each document's own time. `telegraf.resolved.conf` is not loaded.
 
@@ -98,7 +99,7 @@ they come from the job's `GITHUB_*` variables, or are `local`.
   `end` and `duration`. A test that never finished, for example because the job timed out, has
   `outcome: unfinished` and ends when the job did. Snap lists and snapd changes are stored but not
   searchable.
-- **Juju status** has one `type: juju_status` document per 30 s snapshot, with `controller`, `model`
+- **Juju status** has one document per 30 s snapshot, with `controller`, `model`
   and a `units` list of `app`, `unit`, `workload_status`, `agent_status` and `message`, subordinates
   included. The full `juju status` output is in `status`, stored but not searchable. `units` is a
   plain list, so a search for one unit and one status matches a snapshot where any unit has that
@@ -148,9 +149,9 @@ GET ci-logs-juju-*/_search
 Juju status snapshots during a test where a unit was in error, blocked or waiting:
 
 ```json
-GET ci-meta/_search
+GET ci-juju-status-*/_search
 {"sort": ["@timestamp"], "query": {"bool": {"filter": [
-  {"term": {"type": "juju_status"}}, {"term": {"bundle_id": "<bundle_id>"}},
+  {"term": {"bundle_id": "<bundle_id>"}},
   {"terms": {"units.workload_status": ["error", "blocked", "waiting"]}},
   {"range": {"@timestamp": {"gte": "<@timestamp>", "lte": "<end>"}}}]}}}
 ```
