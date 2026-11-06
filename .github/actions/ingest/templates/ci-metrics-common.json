@@ -1,0 +1,44 @@
+{
+  "template": {
+    "mappings": {
+      "date_detection": false,
+      "dynamic_templates": [
+        {
+          "whole_numbers": {
+            "match_mapping_type": "long",
+            "mapping": {
+              "type": "double"
+            }
+          }
+        },
+        {
+          "numbers": {
+            "match_mapping_type": "double",
+            "mapping": {
+              "type": "double"
+            }
+          }
+        },
+        {
+          "strings": {
+            "match_mapping_type": "string",
+            "mapping": {
+              "type": "keyword"
+            }
+          }
+        }
+      ],
+      "properties": {
+        "@timestamp": {
+          "type": "date"
+        },
+        "measurement_name": {
+          "type": "keyword"
+        },
+        "bundle_id": {
+          "type": "keyword"
+        }
+      }
+    }
+  }
+}

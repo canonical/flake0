@@ -1,0 +1,87 @@
+{
+  "index_patterns": [
+    "ci-meta"
+  ],
+  "template": {
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "type": {
+          "type": "keyword"
+        },
+        "@timestamp": {
+          "type": "date"
+        },
+        "end": {
+          "type": "date"
+        },
+        "bundle_id": {
+          "type": "keyword"
+        },
+        "tag": {
+          "properties": {
+            "run_id": {
+              "type": "keyword"
+            },
+            "run_attempt": {
+              "type": "keyword"
+            },
+            "repo": {
+              "type": "keyword"
+            },
+            "workflow": {
+              "type": "keyword"
+            },
+            "job": {
+              "type": "keyword"
+            },
+            "sha": {
+              "type": "keyword"
+            },
+            "ref": {
+              "type": "keyword"
+            },
+            "runner_name": {
+              "type": "keyword"
+            },
+            "runner_os": {
+              "type": "keyword"
+            },
+            "image_os": {
+              "type": "keyword"
+            }
+          }
+        },
+        "nodeid": {
+          "type": "keyword"
+        },
+        "attempt": {
+          "type": "integer"
+        },
+        "outcome": {
+          "type": "keyword"
+        },
+        "duration": {
+          "type": "double"
+        },
+        "env_start": {
+          "properties": {
+            "kernel": {
+              "type": "keyword"
+            }
+          }
+        },
+        "env_end": {
+          "properties": {
+            "kernel": {
+              "type": "keyword"
+            }
+          }
+        },
+        "failure": {
+          "type": "text"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "index_patterns": [
+    "ci-juju-status-*"
+  ],
+  "template": {
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "@timestamp": {
+          "type": "date"
+        },
+        "bundle_id": {
+          "type": "keyword"
+        },
+        "tag": {
+          "properties": {
+            "run_id": {
+              "type": "keyword"
+            },
+            "run_attempt": {
+              "type": "keyword"
+            },
+            "repo": {
+              "type": "keyword"
+            },
+            "workflow": {
+              "type": "keyword"
+            },
+            "job": {
+              "type": "keyword"
+            },
+            "sha": {
+              "type": "keyword"
+            },
+            "ref": {
+              "type": "keyword"
+            },
+            "runner_name": {
+              "type": "keyword"
+            },
+            "runner_os": {
+              "type": "keyword"
+            },
+            "image_os": {
+              "type": "keyword"
+            }
+          }
+        },
+        "controller": {
+          "type": "keyword"
+        },
+        "model": {
+          "type": "keyword"
+        },
+        "units": {
+          "properties": {
+            "app": {
+              "type": "keyword"
+            },
+            "unit": {
+              "type": "keyword"
+            },
+            "workload_status": {
+              "type": "keyword"
+            },
+            "agent_status": {
+              "type": "keyword"
+            },
+            "message": {
+              "type": "text"
+            }
+          }
+        }
+      }
+    }
+  }
+}

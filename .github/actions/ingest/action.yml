@@ -1,0 +1,56 @@
+name: ingest
+description: >-
+  Loads a flake0 collect bundle into OpenSearch 2.x: metrics, logs, run and test
+  metadata. Never fails the job. Part of the Flake0 AI debugging suite.
+author: canonical
+branding:
+  icon: upload-cloud
+  color: orange
+
+inputs:
+  bundle-path:
+    description: "Path to a collect bundle archive (tar.zst or tar.gz), e.g. the collect stop output"
+    required: true
+  url:
+    description: "OpenSearch URL, https only. Empty skips loading, e.g. on pull requests from forks."
+    required: false
+    default: ""
+  username:
+    description: "OpenSearch user"
+    required: false
+    default: ""
+  password:
+    description: "OpenSearch password. Pass a secret."
+    required: false
+    default: ""
+  ca-cert:
+    description: "PEM text of the CA that signed the cluster's certificate, when it is not a public one"
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Skip without a cluster
+      if: ${{ inputs.url == '' }}
+      shell: bash
+      run: |
+        echo "::notice::flake0-ingest: no url given, not loading the bundle"
+
+    # Inputs reach the script through env, never the command line or the script body.
+    - name: Load bundle
+      if: ${{ inputs.url != '' }}
+      shell: bash
+      env:
+        BUNDLE_PATH: ${{ inputs.bundle-path }}
+        OPENSEARCH_URL: ${{ inputs.url }}
+        OPENSEARCH_USER: ${{ inputs.username }}
+        OPENSEARCH_PASSWORD: ${{ inputs.password }}
+        CA_CERT: ${{ inputs.ca-cert }}
+      run: |
+        if [ -n "$CA_CERT" ]; then
+          export OPENSEARCH_CA="$RUNNER_TEMP/flake0-ingest-ca.pem"
+          printf '%s\n' "$CA_CERT" > "$OPENSEARCH_CA"
+        fi
+        python3 "$GITHUB_ACTION_PATH/scripts/ingest.py" "$BUNDLE_PATH" \
+          || echo "::warning::flake0-ingest: the bundle was not loaded, see the log above"

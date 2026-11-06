@@ -6,10 +6,15 @@ nothing with FLAKE0_MARKERS unset, and a failed write never fails the test run.
 
 import json
 import os
+import re
 from datetime import datetime, timezone
 
 PATH = os.environ.get("FLAKE0_MARKERS")
 SEVERITY = ["passed", "skipped", "failed", "error"]
+FAILURE_CHARS = 4000  # the end of a traceback, where the exception and the assertion are
+# redact.sed's private-key pattern. Masked here, because sed's multi-line rule masks from a key
+# header with no footer to the end of markers.ndjson, and a JSON line has no footer line.
+PRIVATE_KEY = re.compile(r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----.*?(?:-----END (?:[A-Z]+ )?PRIVATE KEY-----|\Z)", re.DOTALL)
 # shortcut: under pytest-xdist the controller and each worker write, so lines repeat. No-op on PYTEST_XDIST_WORKER if a consumer adopts it.
 tests = {}
 
@@ -45,11 +50,16 @@ def pytest_runtest_logstart(nodeid):
 def pytest_runtest_logreport(report):
     test = tests.get(report.nodeid)
     if test:
-        test["outcome"] = max(test["outcome"], phase_outcome(report), key=SEVERITY.index)
+        outcome = phase_outcome(report)
+        test["outcome"] = max(test["outcome"], outcome, key=SEVERITY.index)
         test["duration"] += report.duration
+        # The first failing phase is the cause: a teardown error after a failed call adds less.
+        if outcome in ("failed", "error") and "failure" not in test:
+            # Masked before the cut, which could drop a header and keep the key.
+            test["failure"] = PRIVATE_KEY.sub("***REDACTED-PRIVATE-KEY-BLOCK***", report.longreprtext)[-FAILURE_CHARS:]
 
 
 def pytest_runtest_logfinish(nodeid):
     test = tests.pop(nodeid, None)
     if test:
-        write("finish", nodeid, outcome=test["outcome"], duration=round(test["duration"], 3))
+        write("finish", nodeid, **{**test, "duration": round(test["duration"], 3)})

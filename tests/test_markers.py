@@ -7,12 +7,14 @@ PYTEST_PLUGINS and PYTHONPATH, the way the collect action loads it on a runner.
 import json
 import pathlib
 import re
+import subprocess
 
 import pytest
 
 pytest_plugins = ["pytester"]
 
 PLUGIN_DIR = pathlib.Path(__file__).resolve().parents[1] / ".github/actions/collect/pytest"
+REDACT = PLUGIN_DIR.parent / "scripts/redact.sh"
 TESTS = """
 import pytest
 
@@ -71,6 +73,38 @@ def test_outcomes(run, markers):
         "test_inner.py::test_skip": "skipped",
         "test_inner.py::test_setup_error": "error",
     }
+
+
+def test_failure_text(run, markers):
+    run()
+    finish = {r["nodeid"].split("::")[1]: r for r in lines(markers) if r["event"] == "finish"}
+    assert "assert False" in finish["test_fail"]["failure"]
+    assert "RuntimeError: setup failed" in finish["test_setup_error"]["failure"]
+    assert "failure" not in finish["test_pass"]
+    assert "failure" not in finish["test_skip"]
+
+
+def test_failure_text_keeps_its_end(run, markers, pytester):
+    pytester.makepyfile(test_inner='def test_long():\n    raise ValueError("a" * 10000 + " END")\n')
+    run()
+    failure = next(r["failure"] for r in lines(markers) if r["event"] == "finish")
+    assert len(failure) == 4000
+    assert "END" in failure[-100:]  # pytest ends with the location, "test_inner.py:2: ValueError"
+
+
+def test_private_key_in_failure_survives_redaction(run, markers, pytester):
+    # redact.sed masks a key header with no footer through to the end of the file.
+    pytester.makepyfile(test_inner="""
+        def test_cert():
+            assert "-----BEGIN PRIVATE KEY-----MIIsecret" == ""
+
+        def test_after():
+            pass
+        """)
+    run()
+    subprocess.run([REDACT, markers], check=True)
+    assert len(lines(markers)) == 4
+    assert "MIIsecret" not in markers.read_text()
 
 
 def test_failed_teardown_is_an_error(run, markers, pytester):
