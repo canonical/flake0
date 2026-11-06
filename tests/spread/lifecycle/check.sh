@@ -25,6 +25,10 @@ done
 [ ! -e "$STATUS-controller.ndjson" ] || fail "the controller model got status"
 if compgen -G "$B/juju-*-user-*" > /dev/null; then fail "the runner user's store should be empty"; fi
 
+# job.log holds Set up job and the Run spread job step's script
+grep -q 'Current runner version' "$B/job.log" || fail "no Set up job in job.log"
+grep -qF 'spread -vv' "$B/job.log" || fail "no earlier step in job.log"
+
 for f in kernel.log snapd.log env-start.json env-end.json; do
   [ -e "$B/$f" ] || fail "missing $f"
 done
