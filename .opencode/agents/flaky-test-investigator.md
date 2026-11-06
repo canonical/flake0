@@ -7,22 +7,36 @@ permission:
   read: allow
   glob: allow
   grep: allow
+  # Allowlist: deny everything, then allow read-only commands.
+  # opencode applies the last matching rule, so "*" must come first.
   bash:
-    "*": allow
-    "sudo *": deny
-    "rm *": deny
-    "rmdir *": deny
-    "mv *": deny
-    "cp *": deny
-    "mkdir *": deny
-    "touch *": deny
-    "chmod *": deny
-    "chown *": deny
-    "git add*": deny
-    "git commit*": deny
-    "git push*": deny
-    "git rebase*": deny
-    "git reset*": deny
+    "*": deny
+    "gh run view*": allow
+    "gh run list*": allow
+    "gh pr view*": allow
+    "gh pr diff*": allow
+    "gh api *": allow
+    # gh api switches to POST when fields are passed; keep it read-only.
+    "gh api *-X*": deny
+    "gh api *--method*": deny
+    "gh api *-f *": deny
+    "gh api *-F *": deny
+    "gh api *--field*": deny
+    "gh api *--raw-field*": deny
+    "gh api *--input*": deny
+    "git log*": allow
+    "git show*": allow
+    "git diff*": allow
+    "git blame*": allow
+    "git remote -v": allow
+    "grep *": allow
+    "rg *": allow
+    "cat *": allow
+    "head *": allow
+    "tail *": allow
+    "wc *": allow
+    "ls*": allow
+    "jq *": allow
   webfetch: deny
   skill: allow
 ---
@@ -45,7 +59,7 @@ Input: a GitHub Actions URL (run, job, or failed step) of a failing integration 
    - Does the failure pattern (timeout, resource exhaustion, transient network error, service not yet ready) point to environment or timing rather than logic?
    - Is the triggering change unrelated to the failing test's functional area?
    - Does this test have a history of intermittent failures on this branch?
-5. **Hypothesize the root cause** using the skill's categories: code issue, test issue, environmental issue, or other.
+5. **Hypothesize the root cause** using the root cause categories in `docs/taxonomy.md` (Axis 2).
 
 ## Report
 
@@ -61,5 +75,6 @@ Return a single report with:
 - **Confidence**: a percentage (0-100) plus its bucket (`high`/`medium`/`low`), computed from evidence completeness per the formula in `docs/taxonomy.md` — e.g. `65% (medium)`. Do not report a percentage that isn't traceable to which signals were present, missing, or contradictory.
 - **Recommendation**: derived from the (verdict, root cause) combination table in `docs/taxonomy.md` — `block_merge` / `open_issue` / `fix_test` / `quarantine_test` / `retry_safe` / `escalate_infra` / `needs_human_review`
 - **Evidence**: the concrete signals supporting the verdict and root cause (log excerpts, run history, diff analysis)
+- **Suggested fix**: a short, concrete pointer to how the root cause could be fixed (file/function and the change in prose), or `none` when the recommendation is `retry_safe` / `needs_human_review`. Follow the skill's rule on not weakening tests.
 
 Be evidence-driven: if the signals are insufficient, report `INCONCLUSIVE` / `unknown` / `needs_human_review` and list what additional data (e.g., a re-run, node metrics) would settle it. Do not modify any files.

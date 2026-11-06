@@ -19,6 +19,15 @@ caused by `code_regression` (e.g. a race condition introduced by the PR) —
 that combination must still route to `block_merge`, not be dismissed as
 "just flaky." See the combination table in `docs/taxonomy.md`.
 
+Do not treat "change the test so it passes" as a fix. The tests under
+investigation were reviewed and accepted as stable when they were merged, so
+the default assumption is that the test is correct. Never suggest loosening
+assertions, increasing timeouts or retries, skipping, or `xfail`-ing a test
+to hide a failure. Use `test_defect` / `fix_test` only when the evidence
+points at a specific defect in the test itself (e.g. a missing wait on a
+status the charm is documented to reach asynchronously), and cite that
+evidence.
+
 ## Procedure
 1. **Gather Information**: Collect all relevant information about the failing integration test. All what you need will be available locally, this includes code source change, test logs, environment configuration and metrics about resources.
 
