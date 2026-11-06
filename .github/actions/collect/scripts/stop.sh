@@ -101,6 +101,20 @@ rm -f "$PIDFILE" "$LAUNCHER_PIDFILE" "$DIR_POINTER"
 # Before the chown and tar below, so nothing is still writing into the directory.
 "$(dirname "${BASH_SOURCE[0]}")/stop-watcher.sh" "$FLAKE0_COLLECT_DIR"
 
+# --- job log ---------------------------------------------------------------------
+# The pages joblog-watch.sh kept, in page order, so job.log ends at this step. Each
+# page starts with a BOM. Version sort puts page 10 after page 9.
+PAGES="$FLAKE0_COLLECT_DIR/joblog-pages"
+if [ -d "$PAGES" ]; then
+  find "$PAGES" -name '*.log' | sort -V | xargs -r -d '\n' sed -s '1s/^\xEF\xBB\xBF//' \
+    > "$FLAKE0_COLLECT_DIR/job.log"
+  rm -rf "$PAGES"
+  if [ ! -s "$FLAKE0_COLLECT_DIR/job.log" ]; then
+    rm -f "$FLAKE0_COLLECT_DIR/job.log"
+    echo "flake0-collect: warning: no job log pages found in the runner's _diag/pages" >&2
+  fi
+fi
+
 if [ -n "${FLAKE0_TEST_LOG:-}" ] && ! cp -- "$FLAKE0_TEST_LOG" "$FLAKE0_COLLECT_DIR/pytest.log" 2>/dev/null; then
   echo "flake0-collect: warning: test-log not readable: $FLAKE0_TEST_LOG" >&2
 fi

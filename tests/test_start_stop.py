@@ -5,6 +5,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import time
 
 import pytest
 
@@ -96,3 +97,32 @@ def test_stop_removes_the_plugins_bytecode(tmp_path):
     collect.mkdir()
     run_stop(collect, tmp_path)
     assert not cache.exists()
+
+
+def test_job_log_keeps_pages_the_runner_deleted(tmp_path):
+    job, other = "1a2b-3c", "9f9f-00"
+    diag = tmp_path / "_diag"
+    (diag / "pages").mkdir(parents=True)
+    (diag / "Worker_20261106-100000-utc.log").write_text(f"[2026-11-06 10:00:00Z INFO JobRunner] Job ID {other}\n")
+    (diag / "Worker_20261106-110000-utc.log").write_text(f"[2026-11-06 11:00:00Z INFO JobRunner] Job ID {job}\n")
+    pages = {n: diag / f"pages/plan_{job}_{n}.log" for n in (1, 2, 10)}
+    for n, page in pages.items():
+        page.write_text(f"﻿page {n}\n", encoding="utf-8")
+    (diag / f"pages/plan_{other}_3.log").write_text("other job\n")
+    collect = tmp_path / "collect"
+    collect.mkdir()
+    subprocess.Popen(
+        [ACTION / "scripts/joblog-watch.sh", collect],
+        env={**os.environ, "FLAKE0_RUNNER_DIAG": str(diag)},
+        start_new_session=True,
+    )
+    kept = collect / "joblog-pages"
+    deadline = time.monotonic() + 10
+    while len(list(kept.glob("*.log"))) < 3 and time.monotonic() < deadline:
+        time.sleep(0.1)
+    for page in pages.values():
+        page.unlink()  # as the runner does after the upload
+    run_stop(collect, tmp_path)
+    assert (collect / "job.log").read_text(encoding="utf-8") == "page 1\npage 2\npage 10\n"
+    assert not kept.exists()
+    assert not (collect / "joblog-watcher.pid").exists()
