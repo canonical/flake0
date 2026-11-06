@@ -107,7 +107,9 @@ they come from the job's `GITHUB_*` variables, or are `local`.
   and a `units` list of `app`, `unit`, `workload_status`, `agent_status` and `message`, subordinates
   included. The full `juju status` output is in `status`, stored but not searchable. `units` is a
   plain list, so a search for one unit and one status matches a snapshot where any unit has that
-  status. Like the bundle's copy, it is not redacted.
+  status. Like the bundle's copy, it is not redacted. Juju retries a failed hook within seconds, so
+  a unit can be in `error` between two snapshots and never show it. Search the Juju log for hook
+  failures, as below.
 
 Loading a bundle again overwrites its documents and does not duplicate them. When a Juju or
 workload follower reconnects, it replays history that is already in the file, after a `# flake0:`
@@ -148,6 +150,15 @@ GET ci-logs-juju-*/_search
 {"sort": ["@timestamp", "line"], "query": {"bool": {"filter": [
   {"term": {"bundle_id": "<bundle_id>"}}, {"terms": {"level": ["ERROR", "WARNING"]}},
   {"range": {"@timestamp": {"gte": "<@timestamp>", "lte": "<end>"}}}]}}}
+```
+
+Failed hooks, which the status snapshots can miss:
+
+```json
+GET ci-logs-juju-*/_search
+{"sort": ["@timestamp", "line"], "query": {"bool": {
+  "filter": [{"term": {"bundle_id": "<bundle_id>"}}, {"term": {"module": "juju.worker.uniter.operation"}}],
+  "must": [{"match_phrase": {"message": "failed"}}]}}}
 ```
 
 Juju status snapshots during a test where a unit was in error, blocked or waiting:
