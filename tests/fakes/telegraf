@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Fake telegraf for tests/test_start_stop.py. It writes the pidfile and the first
+# metrics that start.sh's health check waits for, then idles until stop.sh kills it.
+[ "$1" = version ] && { echo "Telegraf fake"; exit 0; }
+[[ " $* " == *" --test "* ]] && exit 0
+while [ $# -gt 0 ]; do
+  [ "$1" = --pidfile ] && pidfile=$2
+  shift
+done
+echo "$$" > "$pidfile"
+echo '{"metrics":[]}' > "$FLAKE0_COLLECT_DIR/metrics.json"
+exec sleep 300

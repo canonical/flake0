@@ -21,22 +21,27 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SED_FILE="${FLAKE0_REDACT_SED:-$DIR/redact.sed}"
 VALUES="${FLAKE0_REDACT_VALUES:-}"
 
-# Build the sed program: committed patterns first, then one literal substitution
-# per secret value. Each value is escaped so regex metacharacters and the "/"
-# delimiter are matched literally.
-prog=()
-[ -r "$SED_FILE" ] && prog+=(-f "$SED_FILE")
+# Build the sed program: one literal substitution per secret value, then the
+# committed patterns. Values go first, so a pattern cannot rewrite part of a listed
+# secret, and longest first, so a shorter value cannot split a longer one that
+# contains it, like a password holding the username. Each value is escaped so regex metacharacters and the "/" delimiter are
+# matched literally under sed -E. It goes in a file, because a long value list would
+# pass the limit on one argument and sed would never run.
+PROG="$(mktemp)" || exit 0
+trap 'rm -f "$PROG"' EXIT
 if [ -n "$VALUES" ] && [ -r "$VALUES" ]; then
-  while IFS= read -r v || [ -n "$v" ]; do
-    [ -n "$v" ] || continue
-    prog+=(-e "s/$(printf '%s' "$v" | sed 's#[][\\/.*^$&]#\\&#g')/***REDACTED***/g")
-  done < "$VALUES"
+  awk '{sub(/\r$/, ""); print length($0), $0}' < "$VALUES" | sort -rn | cut -d' ' -f2- \
+    | while IFS= read -r v; do
+      [ -n "$v" ] || continue
+      echo "s/$(printf '%s' "$v" | sed 's#[][\\/.*^$&+?(){}|]#\\&#g')/***REDACTED***/g"
+    done >> "$PROG"
 fi
-[ ${#prog[@]} -gt 0 ] || exit 0
+[ -r "$SED_FILE" ] && cat "$SED_FILE" >> "$PROG"
+[ -s "$PROG" ] || exit 0
 
 # Only regular files under the given paths. xargs -r skips sed when there are
 # none. Failures are swallowed: a log that cannot be rewritten is left as is
 # rather than failing the job, and is no worse than before redaction existed.
 find "$@" -type f -print0 2> /dev/null \
-  | xargs -0 -r sed -i -E "${prog[@]}" 2> /dev/null || true
+  | xargs -0 -r sed -i -E -f "$PROG" 2> /dev/null || true
 exit 0
