@@ -32,7 +32,7 @@ jobs:
           pip install ruff==0.16.7 pytest==9.1.1 -r .github/actions/plot/scripts/requirements.txt
 
       - name: ruff
-        run: ruff check .github/actions/plot/scripts/plot_telemetry.py tests/test_juju_watch.py tests/test_workload_watch.py tests/fakes/lxc
+        run: ruff check .github/actions/plot/scripts/plot_telemetry.py tests/test_juju_watch.py tests/test_workload_watch.py tests/test_redact.py tests/fakes/lxc
 
       - name: pytest
         run: python3 -m pytest tests/
