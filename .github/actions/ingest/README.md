@@ -61,10 +61,9 @@ TLS is always verified. There is no option to turn that off.
 |---|---|---|
 | `ci-metrics-YYYY.MM` | Telegraf metric | `metrics*.json` |
 | `ci-logs-YYYY.MM` | non-empty log line | every `*.log` file, including `workload/` |
-| `ci-meta` | run, and test attempt | `env-start.json`, `env-end.json`, `markers.ndjson` |
+| `ci-meta` | run, test attempt, and Juju status snapshot | `env-start.json`, `env-end.json`, `markers.ndjson`, `juju-status-*.ndjson` |
 
-The month comes from each document's own time. `juju-status-*.ndjson` and `telegraf.resolved.conf`
-are not loaded.
+The month comes from each document's own time. `telegraf.resolved.conf` is not loaded.
 
 Every document carries `bundle_id`, which tells matrix legs and repeated jobs apart. Logs and meta
 documents also carry the run tags as `tag.run_id`, `tag.repo`, `tag.job` and so on, the same field
@@ -84,6 +83,11 @@ they come from the job's `GITHUB_*` variables, or are `local`.
   `end` and `duration`. A test that never finished, for example because the job timed out, has
   `outcome: unfinished` and ends when the job did. Snap lists and snapd changes are stored but not
   searchable.
+- **Juju status** has one `type: juju_status` document per 30 s snapshot, with `controller`, `model`
+  and a `units` list of `app`, `unit`, `workload_status`, `agent_status` and `message`, subordinates
+  included. The full `juju status` output is in `status`, stored but not searchable. `units` is a
+  plain list, so a search for one unit and one status matches a snapshot where any unit has that
+  status. Like the bundle's copy, it is not redacted.
 
 Loading a bundle again overwrites its documents and does not duplicate them. When a Juju or
 workload follower reconnects, it replays history that is already in the file, after a `# flake0:`
@@ -117,6 +121,16 @@ GET ci-metrics-*/_search
   {"range": {"@timestamp": {"gte": "<@timestamp>", "lte": "<end>"}}}]}}}
 ```
 
+Juju status snapshots during a test where a unit was in error, blocked or waiting:
+
+```json
+GET ci-meta/_search
+{"sort": ["@timestamp"], "query": {"bool": {"filter": [
+  {"term": {"type": "juju_status"}}, {"term": {"bundle_id": "<bundle_id>"}},
+  {"terms": {"units.workload_status": ["error", "blocked", "waiting"]}},
+  {"range": {"@timestamp": {"gte": "<@timestamp>", "lte": "<end>"}}}]}}}
+```
+
 One bundle's kernel log, in order:
 
 ```json
@@ -140,8 +154,10 @@ for t in ci-metrics ci-logs ci-meta; do
 done
 ```
 
-A template applies when an index is created. A changed template therefore applies from the next
-month's indices, unless you reindex.
+A template applies when an index is created, so each run also adds the templates' new fields to the
+existing indices. `write` allows that. Documents loaded before a new field existed become searchable
+on it once their bundle is loaded again. A field that changes type cannot be updated in place: the
+script warns, and that index needs a reindex.
 
 ## Limits
 

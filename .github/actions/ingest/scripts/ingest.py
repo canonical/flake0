@@ -33,6 +33,7 @@ RUN_TAGS = {
     "runner_name": "RUNNER_NAME", "runner_os": "RUNNER_OS", "image_os": "ImageOS",
 }
 METRICS = re.compile(r"metrics[^/]*\.json")  # Telegraf rotates to metrics.<time>-<n>.json
+JUJU_STATUS = re.compile(r"juju-status-[^/]*\.ndjson")
 CRI = re.compile(r"\S+ (?:stdout|stderr) [FP](?: |$)")
 
 ISO = r"(\d{4}-\d\d-\d\d)[T ](\d\d:\d\d:\d\d)(?:[.,](\d+))?(Z|[+-]\d\d:?\d\d)?"
@@ -228,6 +229,39 @@ def meta_docs(files, bundle_id, tags, env_start, env_end):
             yield test(nodeid, attempt, started, end, "unfinished", None)
 
 
+def unit_doc(name, unit):
+    workload = unit.get("workload-status", {})
+    return {"app": name.split("/")[0], "unit": name, "workload_status": workload.get("current"),
+            "agent_status": unit.get("juju-status", {}).get("current"), "message": workload.get("message")}
+
+
+def units(status):
+    """Flattens the units of `juju status --format=json`, subordinates included, into fixed
+    field names. App and unit names are keys there, and would add mapping fields every run."""
+    for app in status.get("applications", {}).values():
+        for name, unit in app.get("units", {}).items():
+            yield unit_doc(name, unit)
+            for sub_name, sub in unit.get("subordinates", {}).items():
+                yield unit_doc(sub_name, sub)
+
+
+def juju_status_docs(files, bundle_id, tags):
+    for rel in filter(JUJU_STATUS.fullmatch, files):
+        bad = 0
+        for n, line in json_lines(files, rel):
+            try:
+                status = line["status"]
+                doc = {"type": "juju_status", "bundle_id": bundle_id, "tag": tags, "@timestamp": line["ts"],
+                       "controller": status["model"]["controller"], "model": status["model"]["name"],
+                       "units": list(units(status)), "status": status}
+            except (KeyError, TypeError, AttributeError):
+                bad += 1
+                continue
+            yield "ci-meta", doc_id(bundle_id, rel, n), doc
+        if bad:
+            warn(f"skipped {bad} badly shaped line{'s' * (bad > 1)} in {rel}")
+
+
 def connect(env):
     """Returns request(method, path, body) -> (status, json) for the cluster in env."""
     url = env.get("OPENSEARCH_URL", "").rstrip("/")
@@ -264,12 +298,19 @@ def connect(env):
 
 def install_templates(request):
     for name in ("ci-metrics", "ci-logs", "ci-meta"):
-        with open(os.path.join(TEMPLATES, f"{name}.json"), "rb") as f:
-            status, resp = request("PUT", f"/_index_template/{name}", f.read())
+        with open(os.path.join(TEMPLATES, f"{name}.json")) as f:
+            template = json.load(f)
+        status, resp = request("PUT", f"/_index_template/{name}", json.dumps(template).encode())
         if status == 403:
             warn(f"no permission to install the {name} template, loading with the one in place")
         elif status >= 300:
             raise Failure(f"installing the {name} template failed: HTTP {status} {resp}")
+        # A template applies only when an index is created, so add new fields to existing ones
+        # too. 404 means no index yet. A field that changed type needs a reindex.
+        pattern = template["index_patterns"][0]
+        status, resp = request("PUT", f"/{pattern}/_mapping", json.dumps(template["template"]["mappings"]).encode())
+        if status not in (200, 404):
+            warn(f"could not update the mapping of {pattern}, loading anyway: HTTP {status} {resp}")
 
 
 def send(request, body):
@@ -326,6 +367,7 @@ def main(argv, request=None):
             install_templates(request)
             total = bulk(request, chain(
                 meta_docs(files, bundle_id, tags, env_start, env_end),
+                juju_status_docs(files, bundle_id, tags),
                 metric_docs(files, bundle_id),
                 log_docs(files, bundle_id, tags, fallback_month),
             ))

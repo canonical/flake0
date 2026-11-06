@@ -23,15 +23,19 @@ TAGS = {
 class FakeOpenSearch:
     """Records requests and answers like OpenSearch, failing items listed in `reject`."""
 
-    def __init__(self, template_status=200, reject=(), throttle=0):
+    def __init__(self, template_status=200, reject=(), throttle=0, mapping_status=200):
         self.calls, self.docs = [], {}
         self.template_status, self.reject, self.throttle = template_status, reject, throttle
+        self.mapping_status = mapping_status
 
     def __call__(self, method, path, body=None, ctype="application/json"):
         self.calls.append((method, path))
         if path.startswith("/_index_template/"):
             json.loads(body)
             return self.template_status, {}
+        if path.endswith("/_mapping"):
+            json.loads(body)
+            return self.mapping_status, {"error": {"reason": "mapper [model] cannot be changed"}}
         if self.throttle:
             self.throttle -= 1
             return 429, {}
@@ -87,6 +91,7 @@ def load(root, fake=None):
     ("# flake0: connect root:lxd:testing at 2026-09-25T10:00:00.100Z", "2026-09-25T10:00:00.100Z"),
     ("# flake0: reconnect 1 at 2026-09-25T10:05:00.100Z after exit 1", "2026-09-25T10:05:00.100Z"),
     ("2026-11-06T06:41:11Z I! Starting Telegraf", "2026-11-06T06:41:11.000Z"),
+    ("2026-11-06T06:41:20.1234567Z ##[group]Run actions/checkout", "2026-11-06T06:41:20.123Z"),
     ("[2026-11-06T06:41:11,123][INFO ][o.o.n.Node] started", "2026-11-06T06:41:11.123Z"),
     ("[2026-11-06 06:41:11,123] INFO kafka", "2026-11-06T06:41:11.123Z"),
     ("2026-11-06 06:41:11.123 UTC [12] LOG: ready", "2026-11-06T06:41:11.123Z"),
@@ -217,7 +222,6 @@ def test_symlinks_and_other_files_skipped(tmp_path):
     secret.write_text("2026-11-06T10:00:00Z private key\n")
     root = write_bundle(tmp_path / "b", logs={"telegraf.resolved.conf": "[agent]\n"})
     (root / "kernel.log").symlink_to(secret)
-    (root / "juju-status-root-lxd-testing.ndjson").write_text('{"ts": "x", "status": {}}\n')
     fake = load(root)
     assert fake.of("ci-logs-") == []
     assert all("private" not in json.dumps(d) for d in fake.docs.values())
@@ -247,6 +251,34 @@ def test_meta_docs(tmp_path):
     ]
 
 
+def juju_status(ts, workload, message):
+    unit = {"workload-status": {"current": workload, "message": message}, "juju-status": {"current": "idle"},
+            "subordinates": {"grafana-agent/0": {"workload-status": {"current": "active"},
+                                                 "juju-status": {"current": "executing"}}}}
+    status = {"model": {"name": "testing", "controller": "concierge-lxd"},
+              "applications": {"valkey": {"units": {"valkey/0": unit}}, "empty": {}}}
+    return json.dumps({"ts": ts, "status": status}) + "\n"
+
+
+def test_juju_status_docs(tmp_path, capsys):
+    fake = load(write_bundle(tmp_path / "b", logs={"juju-status-root-concierge-lxd-testing.ndjson": (
+        juju_status("2026-11-06T10:00:00.000Z", "maintenance", "installing")
+        + juju_status("2026-11-06T10:00:30.000Z", "error", 'hook failed: "start"')
+        + '{"ts": "2026-11-06T10:01:00.000Z", "status": "x"}\n'
+    )}))
+    docs = sorted((d for d in fake.of("ci-meta") if d["type"] == "juju_status"), key=lambda d: d["@timestamp"])
+    assert [d["@timestamp"] for d in docs] == ["2026-11-06T10:00:00.000Z", "2026-11-06T10:00:30.000Z"]
+    assert (docs[1]["controller"], docs[1]["model"], docs[1]["tag"]) == ("concierge-lxd", "testing", TAGS)
+    assert docs[1]["units"] == [
+        {"app": "valkey", "unit": "valkey/0", "workload_status": "error", "agent_status": "idle",
+         "message": 'hook failed: "start"'},
+        {"app": "grafana-agent", "unit": "grafana-agent/0", "workload_status": "active",
+         "agent_status": "executing", "message": None},
+    ]
+    assert docs[1]["status"]["applications"]["valkey"]["units"]["valkey/0"]["workload-status"]["current"] == "error"
+    assert "skipped 1 badly shaped line in juju-status-root-concierge-lxd-testing.ndjson" in capsys.readouterr().err
+
+
 def test_bundle_id_tells_matrix_legs_apart(tmp_path):
     fake = FakeOpenSearch()
     load(write_bundle(tmp_path / "a"), fake)
@@ -272,12 +304,26 @@ def test_archive_input(tmp_path):
     assert [d["file"] for d in fake.of("ci-logs-")] == ["kernel.log"]
 
 
-def test_templates_installed_first_and_403_tolerated(tmp_path, capsys):
+def test_templates_and_mappings_installed_first(tmp_path, capsys):
+    fake = load(write_bundle(tmp_path / "b"))
+    assert [p for _, p in fake.calls[:6]] == [
+        "/_index_template/ci-metrics", "/ci-metrics-*/_mapping", "/_index_template/ci-logs",
+        "/ci-logs-*/_mapping", "/_index_template/ci-meta", "/ci-meta/_mapping"]
+    assert capsys.readouterr().err == ""
+
+
+def test_template_403_tolerated(tmp_path, capsys):
     fake = load(write_bundle(tmp_path / "b"), FakeOpenSearch(template_status=403))
-    assert [p for _, p in fake.calls[:3]] == [
-        "/_index_template/ci-metrics", "/_index_template/ci-logs", "/_index_template/ci-meta"]
     assert fake.of("ci-metrics-")
     assert "no permission" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("status, warned", [(404, False), (400, True), (403, True)])
+def test_mapping_update_never_blocks_the_load(tmp_path, capsys, status, warned):
+    # 404: no index yet. 400: a field changed type, which needs a reindex.
+    fake = load(write_bundle(tmp_path / "b"), FakeOpenSearch(mapping_status=status))
+    assert fake.of("ci-metrics-")
+    assert ("cannot be changed" in capsys.readouterr().err) == warned
 
 
 def test_template_error_fails(tmp_path):
