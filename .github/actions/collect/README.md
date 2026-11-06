@@ -37,7 +37,7 @@ exits 0.
 | `artifact-name` | `flake0-collect-<run_id>-<attempt>-<job>` | Name of the uploaded artifact. Set it in a matrix, because the default repeats across legs and `upload-artifact@v4` rejects duplicates. `stop` reuses the name given at `start`. |
 | `retention-days` | `14` | Artifact retention |
 | `collect-dir` | `$RUNNER_TEMP/flake0-collect` | Collection directory |
-| `logs` | `true` | Follow Juju, workload, kernel and snapd logs. `false` skips them. `pytest.log` comes only from `test-log`, and test markers only from `markers`. |
+| `logs` | `true` | Follow Juju, workload, kernel and snapd logs and the job log. `false` skips them. `pytest.log` comes only from `test-log`, and test markers only from `markers`. |
 | `redact-values` | `""` | Path to a file of secret values (one per line) to mask in collected logs before bundling. See [Workload logs](#workload-logs). |
 | `markers` | `false` | `start` only. Load the test markers pytest plugin in later steps. See [Test output and markers](#test-output-and-markers). |
 | `test-log` | `""` | `stop` only. Path to the job's test output, copied into the bundle as `pytest.log`. See [Test output and markers](#test-output-and-markers). |
@@ -71,6 +71,7 @@ A `tar.zst` artifact containing:
 | `host-watcher.log` | Errors from the two followers above, usually empty |
 | `env-start.json`, `env-end.json` | Kernel version, snaps and snapd changes at `start` and `stop` |
 | `pytest.log` | The file named by `test-log`, when set |
+| `job.log` | The job's own log, from Set up job up to the `stop` step. See [Job log](#job-log) |
 | `markers.ndjson` | One start and one finish line per test, with `markers: true` |
 
 Collected: `cpu` (per-core, incl. `usage_steal`), `mem`, `swap`, `pressure` (PSI — cpu/mem/io
@@ -183,6 +184,18 @@ log is not filtered, because an OOM report spans many lines.
 before the job shows up in `env-start.json`. Compare the `revision` of each snap in the two files to catch a refresh mid-run.
 `snaps` and `changes` are `null` without snapd. These files are not redacted, see
 [Redaction](#redaction).
+
+### Job log
+
+`job.log` is the job's log as the Actions UI shows it: every step from Set up job and Checkout up
+to the `stop` step, with each `##[error]`. A step that runs after `stop`, such as a classifier, can
+read the whole job from the bundle. It needs no root and no token.
+
+The runner writes this log to `_diag/pages` under its own directory, in pages of about 8 MB, and
+deletes each page after it uploads it. A watcher hard-links each page into the collect dir as it
+appears, and `stop` joins them. These are undocumented runner internals, tested on runner 2.338.2.
+If they change, `job.log` is missing and `stop` prints a warning. Secrets are masked as GitHub
+masks them in its own log, and the [Redaction](#redaction) rules run on top.
 
 ### Test output and markers
 
