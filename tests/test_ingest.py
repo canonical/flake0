@@ -128,6 +128,15 @@ def test_metrics_shape_and_numbers(tmp_path):
     assert docs[1]["cpu"] == {"usage_steal": 0.7}
 
 
+def test_collector_metrics_kept_apart(tmp_path):
+    fake = load(write_bundle(tmp_path / "b", metrics=[[
+        metric("cpu", {"usage_steal": 0}, 1793959200000),
+        metric("internal_gather", {"gather_time_ns": 5}, 1793959200000),
+    ]]))
+    assert [d["measurement_name"] for d in fake.of("ci-metrics-")] == ["cpu"]
+    assert [d["measurement_name"] for d in fake.of("ci-flake0-metrics-2026.11")] == ["internal_gather"]
+
+
 def test_metrics_with_the_same_series_key_both_kept(tmp_path):
     # pressure emits {total} and {avg10,...} as two metrics with one time and tag set
     tags = {**TAGS, "resource": "cpu", "type": "some"}
@@ -384,20 +393,22 @@ def test_archive_input(tmp_path):
     assert [d["file"] for d in fake.of("ci-logs-")] == ["kernel.log"]
 
 
-LOG_SOURCES = ["app", "flake0", "host", "job", "juju", "k8s", "lxd", "pytest"]
+LOG_SOURCES = ["app", "host", "job", "juju", "k8s", "lxd", "pytest"]
 
 
 def test_templates_and_mappings_installed_first(tmp_path, capsys):
     fake = load(write_bundle(tmp_path / "b"))
     puts = [p for _, p in fake.calls if p != "/_bulk"]
-    assert puts == ["/_component_template/ci-logs-common"] + [
-        p for name, pattern in [("ci-juju-status", "ci-juju-status-*"),
+    assert puts == ["/_component_template/ci-logs-common", "/_component_template/ci-metrics-common"] + [
+        p for name, pattern in [("ci-flake0-logs", "ci-flake0-logs-*"), ("ci-flake0-metrics", "ci-flake0-metrics-*"),
+                                ("ci-juju-status", "ci-juju-status-*"),
                                 *((f"ci-logs-{s}", f"ci-logs-{s}-*") for s in LOG_SOURCES),
                                 ("ci-meta", "ci-meta"), ("ci-metrics", "ci-metrics-*")]
         for p in (f"/_index_template/{name}", f"/{pattern}/_mapping")]
     # each log index gets the shared fields of the component template
     assert fake.bodies["/ci-logs-juju-*/_mapping"]["properties"]["message"] == {"type": "text"}
     assert fake.bodies["/_index_template/ci-logs-juju"]["composed_of"] == ["ci-logs-common"]
+    assert fake.bodies["/ci-flake0-metrics-*/_mapping"]["dynamic_templates"]
     assert capsys.readouterr().err == ""
 
 
@@ -406,11 +417,13 @@ def test_logs_split_by_source(tmp_path):
         "juju-debug-root-lxd-testing.log": "juju", "workload/k8s/valkey-0_testing_charm-1.log": "k8s",
         "workload/lxd/c1/journal.log": "lxd", "workload/lxd/c1/valkey-charmed_valkey_valkey.log": "app",
         "kernel.log": "host", "snapd.log": "host", "job.log": "job", "pytest.log": "pytest",
-        "telegraf.log": "flake0", "watcher.log": "flake0", "workload-watcher.log": "flake0",
+        "telegraf.log": None, "watcher.log": None, "workload-watcher.log": None,
     }
     fake = load(write_bundle(tmp_path / "b", logs={rel: "2026-11-06T10:00:01Z x\n" for rel in sources}))
-    indices = {doc["file"]: index for (index, _), doc in fake.docs.items() if index.startswith("ci-logs-")}
-    assert indices == {rel: f"ci-logs-{source}-2026.11" for rel, source in sources.items()}
+    indices = {doc["file"]: index for (index, _), doc in fake.docs.items() if "logs-" in index}
+    # None: the collector's own logs, kept out of ci-logs-*
+    assert indices == {rel: f"ci-logs-{source}-2026.11" if source else "ci-flake0-logs-2026.11"
+                       for rel, source in sources.items()}
 
 
 def test_template_403_tolerated(tmp_path, capsys):

@@ -1,6 +1,6 @@
 {
   "index_patterns": [
-    "ci-logs-flake0-*"
+    "ci-flake0-logs-*"
   ],
   "composed_of": [
     "ci-logs-common"

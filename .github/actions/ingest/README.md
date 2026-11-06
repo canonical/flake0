@@ -60,9 +60,11 @@ TLS is always verified. There is no option to turn that off.
 | Index | One document per | From |
 |---|---|---|
 | `ci-metrics-YYYY.MM` | Telegraf metric | `metrics*.json` |
+| `ci-flake0-metrics-YYYY.MM` | Telegraf's `internal_*` metric, about the collector itself | `metrics*.json` |
 | `ci-logs-<source>-YYYY.MM` | non-empty log line | every `*.log` file, one index per source below |
 | `ci-meta` | run, and test attempt | `env-start.json`, `env-end.json`, `markers.ndjson` |
 | `ci-juju-status-YYYY.MM` | Juju status snapshot | `juju-status-*.ndjson` |
+| `ci-flake0-logs-YYYY.MM` | non-empty line of the collector's own logs | `telegraf.log`, `*watcher.log` |
 
 The month comes from each document's own time. `telegraf.resolved.conf` is not loaded.
 
@@ -78,7 +80,6 @@ own fields out of the line:
 | `host` | `kernel.log`, `snapd.log` | snapd lines: `host`, `process`, `pid` |
 | `job` | `job.log` | `step`, from the last `##[group]Run <step>` line |
 | `pytest` | `pytest.log` | none |
-| `flake0` | `telegraf.log` and the watchers' own logs | none |
 
 Every document carries `bundle_id`, which tells matrix legs and repeated jobs apart. Logs and meta
 documents also carry the run tags as `tag.run_id`, `tag.repo`, `tag.job` and so on, the same field
@@ -87,7 +88,9 @@ they come from the job's `GITHUB_*` variables, or are `local`.
 
 - **Metrics** have the shape Telegraf's own `outputs.opensearch` writes: `@timestamp`,
   `measurement_name`, `tag.*` and `<measurement>.<field>`, for example `pressure.avg10`. Live
-  streaming can then share these indices later. Every number is mapped as `double`.
+  streaming can then share these indices later. Every number is mapped as `double`. The collector's
+  own `internal_*` measurements go to `ci-flake0-metrics-*`, so `ci-metrics-*` holds only the
+  runner's metrics.
 - **Logs** have `file`, `line`, `message`, `@timestamp` and their source's fields. `message` holds
   what follows the parsed prefix: `boom` for `unit-valkey-0: 2026-11-06 10:00:01.000 ERROR
   unit.valkey/0.juju-log boom`. A line without a time of its own, such as a traceback line, takes
@@ -176,8 +179,8 @@ first:
 
 ```bash
 cd .github/actions/ingest/templates
-for f in ci-logs-common.json $(ls | grep -vx ci-logs-common.json); do
-  case $f in ci-logs-common.json) kind=_component_template ;; *) kind=_index_template ;; esac
+for f in $(grep -L index_patterns *.json) $(grep -l index_patterns *.json); do
+  kind=_index_template; grep -q index_patterns "$f" || kind=_component_template
   curl -u admin --cacert ca.pem -X PUT -H 'Content-Type: application/json' \
     "https://opensearch.example.com:9200/$kind/${f%.json}" -d @"$f"
 done

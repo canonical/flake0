@@ -168,13 +168,16 @@ def metric_docs(files, bundle_id):
                 bad += 1
                 continue
             for i, (ts, doc) in enumerate(docs):
-                yield f"ci-metrics-{month(ts)}", doc_id(bundle_id, rel, n, i), doc
+                # Telegraf's internal_* measurements are about the collector, not the run.
+                own = doc["measurement_name"].startswith("internal_")
+                yield f"{'ci-flake0-metrics' if own else 'ci-metrics'}-{month(ts)}", doc_id(bundle_id, rel, n, i), doc
         if bad:
             warn(f"skipped {bad} badly shaped line{'s' * (bad > 1)} in {rel}")
 
 
 def log_source(rel):
-    """Names the ci-logs-<source>-* index of a bundle file, one per log format."""
+    """Names the source, and so the ci-logs-<source>-* index, of a bundle file: one per log
+    format. flake0 is the collector's own logs, which go to ci-flake0-logs-* instead."""
     if rel.startswith("juju-debug-"):
         return "juju"
     if rel.startswith("workload/k8s/"):
@@ -224,7 +227,7 @@ def log_docs(files, bundle_id, tags, fallback_month):
         offset = 0
         seen, parsed, state = {}, {}, {}
         source = log_source(rel)
-        index = f"ci-logs-{source}"
+        index = "ci-flake0-logs" if source == "flake0" else f"ci-logs-{source}"
         file_fields = path_fields(rel)
         for n, line in lines(files, rel):
             if not line.strip():
