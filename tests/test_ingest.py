@@ -1,0 +1,330 @@
+"""Tests for .github/actions/ingest/scripts/ingest.py, with OpenSearch faked."""
+
+import importlib.util
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+_SCRIPT = Path(__file__).resolve().parents[1] / ".github/actions/ingest/scripts/ingest.py"
+_spec = importlib.util.spec_from_file_location("ingest", _SCRIPT)
+ingest = importlib.util.module_from_spec(_spec)
+sys.modules["ingest"] = ingest
+_spec.loader.exec_module(ingest)
+
+TAGS = {
+    "run_id": "42", "run_attempt": "1", "repo": "canonical/x", "workflow": "ci", "job": "it",
+    "sha": "abc", "ref": "main", "runner_name": "r1", "runner_os": "Linux", "image_os": "ubuntu24",
+}
+
+
+class FakeOpenSearch:
+    """Records requests and answers like OpenSearch, failing items listed in `reject`."""
+
+    def __init__(self, template_status=200, reject=(), throttle=0):
+        self.calls, self.docs = [], {}
+        self.template_status, self.reject, self.throttle = template_status, reject, throttle
+
+    def __call__(self, method, path, body=None, ctype="application/json"):
+        self.calls.append((method, path))
+        if path.startswith("/_index_template/"):
+            json.loads(body)
+            return self.template_status, {}
+        if self.throttle:
+            self.throttle -= 1
+            return 429, {}
+        lines = body.decode().splitlines()
+        items = []
+        for action, doc in zip(lines[::2], lines[1::2]):
+            meta = json.loads(action)["index"]
+            if meta["_id"] in self.reject:
+                items.append({"index": {"status": 400, "error": {"reason": "mapper_parsing_exception"}}})
+                continue
+            self.docs[(meta["_index"], meta["_id"])] = json.loads(doc)
+            items.append({"index": {"status": 201}})
+        return 200, {"errors": any(i["index"]["status"] >= 300 for i in items), "items": items}
+
+    def of(self, prefix):
+        return [doc for (index, _), doc in self.docs.items() if index.startswith(prefix)]
+
+
+def metric(name, fields, ts, tags=TAGS):
+    return {"name": name, "tags": tags, "fields": fields, "timestamp": ts}
+
+
+def write_bundle(root, logs=None, metrics=None, markers=None):
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "env-start.json").write_text(json.dumps(
+        {"ts": "2026-11-06T10:00:00.000Z", "kernel": "6.8.0", "snaps": [{"name": "lxd"}], "changes": None}))
+    (root / "env-end.json").write_text(json.dumps(
+        {"ts": "2026-11-06T10:30:00.000Z", "kernel": "6.8.0", "snaps": [], "changes": []}))
+    if metrics is None:
+        metrics = [[metric("cpu", {"usage_steal": 0}, 1793959200000)]]
+    (root / "metrics.json").write_text("".join(json.dumps({"metrics": b}) + "\n" for b in metrics))
+    for rel, text in (logs or {}).items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text)
+    if markers is not None:
+        (root / "markers.ndjson").write_text("".join(
+            m if isinstance(m, str) else json.dumps(m) + "\n" for m in markers))
+    return root
+
+
+def load(root, fake=None):
+    fake = fake or FakeOpenSearch()
+    assert ingest.main([str(root)], request=fake) == 0
+    return fake
+
+
+@pytest.mark.parametrize("line, ts", [
+    ("2026-11-06T06:41:20,474002+00:00 audit: apparmor=\"DENIED\"", "2026-11-06T06:41:20.474Z"),
+    ("2026-11-06T08:41:11.729199+02:00 host snapd[1]: hi", "2026-11-06T06:41:11.729Z"),
+    ("2026-11-06T06:41:11.123456789Z stdout F hello", "2026-11-06T06:41:11.123Z"),
+    ("machine-0: 2026-09-25 10:00:00.000 INFO juju.worker x", "2026-09-25T10:00:00.000Z"),
+    ("unit-valkey-0: 2026-09-25 10:00:01.5 DEBUG x", "2026-09-25T10:00:01.500Z"),
+    ("# flake0: connect root:lxd:testing at 2026-09-25T10:00:00.100Z", "2026-09-25T10:00:00.100Z"),
+    ("# flake0: reconnect 1 at 2026-09-25T10:05:00.100Z after exit 1", "2026-09-25T10:05:00.100Z"),
+    ("2026-11-06T06:41:11Z I! Starting Telegraf", "2026-11-06T06:41:11.000Z"),
+    ("[2026-11-06T06:41:11,123][INFO ][o.o.n.Node] started", "2026-11-06T06:41:11.123Z"),
+    ("[2026-11-06 06:41:11,123] INFO kafka", "2026-11-06T06:41:11.123Z"),
+    ("2026-11-06 06:41:11.123 UTC [12] LOG: ready", "2026-11-06T06:41:11.123Z"),
+    ('{"t":{"$date":"2026-11-06T06:41:11.123+00:00"},"s":"I"}', "2026-11-06T06:41:11.123Z"),
+    ("1:M 06 Nov 2026 06:41:11.123 * Ready to accept connections", "2026-11-06T06:41:11.123Z"),
+    ("2026-11-06T06:41:11-0500 x", "2026-11-06T11:41:11.000Z"),
+])
+def test_parse_ts(line, ts):
+    assert ingest.parse_ts(line) == ts
+
+
+@pytest.mark.parametrize("line", [
+    "Traceback (most recent call last):",
+    "tests/test_x.py::test_y PASSED",
+    "2026-13-45T99:00:00Z not a date",
+    "",
+])
+def test_parse_ts_none(line):
+    assert ingest.parse_ts(line) is None
+
+
+def test_metrics_shape_and_numbers(tmp_path):
+    fake = load(write_bundle(tmp_path / "b", metrics=[[
+        metric("cpu", {"usage_steal": 0}, 1793959200000),
+        metric("cpu", {"usage_steal": 0.7}, 1793959202000),
+    ]]))
+    docs = sorted(fake.of("ci-metrics-2026.11"), key=lambda d: d["@timestamp"])
+    assert docs[0] == {
+        "@timestamp": "2026-11-06T10:00:00.000Z", "measurement_name": "cpu", "tag": TAGS,
+        "cpu": {"usage_steal": 0}, "bundle_id": docs[0]["bundle_id"],
+    }
+    assert docs[1]["cpu"] == {"usage_steal": 0.7}
+
+
+def test_metrics_with_the_same_series_key_both_kept(tmp_path):
+    # pressure emits {total} and {avg10,...} as two metrics with one time and tag set
+    tags = {**TAGS, "resource": "cpu", "type": "some"}
+    fake = load(write_bundle(tmp_path / "b", metrics=[[
+        metric("pressure", {"total": 5}, 1793959200000, tags),
+        metric("pressure", {"avg10": 0.5}, 1793959200000, tags),
+    ]]))
+    assert len(fake.of("ci-metrics-")) == 2
+
+
+def test_rotated_metrics_and_bad_lines(tmp_path, capsys):
+    root = write_bundle(tmp_path / "b")
+    (root / "metrics.2026-11-06-1793947266.json").write_text(
+        json.dumps({"metrics": [metric("mem", {"used": 1}, 1793959200000)]}) + "\n" + '{"metrics": [{"na')
+    fake = load(root)
+    assert {d["measurement_name"] for d in fake.of("ci-metrics-")} == {"cpu", "mem"}
+    assert "skipped 1 unreadable line" in capsys.readouterr().err
+
+
+def test_reload_overwrites_and_does_not_duplicate(tmp_path):
+    root = write_bundle(tmp_path / "b", logs={"kernel.log": "2026-11-06T10:00:01,000000+00:00 a\n"},
+                        markers=[{"ts": "2026-11-06T10:00:00.000Z", "event": "start", "nodeid": "t"}])
+    fake = load(root)
+    first = len(fake.docs)
+    load(root, fake)
+    assert len(fake.docs) == first
+
+
+def test_log_docs(tmp_path):
+    fake = load(write_bundle(tmp_path / "b", logs={
+        "kernel.log": "2026-11-06T10:00:01,000000+00:00 Out of memory\n\n continuation\n",
+        "pytest.log": "collected 2 items\nFAILED test_x\n",
+    }))
+    kernel = sorted((d for d in fake.of("ci-logs-") if d["file"] == "kernel.log"), key=lambda d: d["line"])
+    assert [(d["line"], d["message"], d["@timestamp"]) for d in kernel] == [
+        (1, "2026-11-06T10:00:01,000000+00:00 Out of memory", "2026-11-06T10:00:01.000Z"),
+        (3, " continuation", "2026-11-06T10:00:01.000Z"),
+    ]
+    assert kernel[0]["tag"] == TAGS
+    pytest_docs = [d for d in fake.of("ci-logs-2026.11") if d["file"] == "pytest.log"]
+    assert len(pytest_docs) == 2
+    assert all("@timestamp" not in d for d in pytest_docs)
+
+
+def test_cri_prefix_stripped(tmp_path):
+    fake = load(write_bundle(tmp_path / "b", logs={"workload/k8s/valkey-0_testing_charm-1.log": (
+        "# flake0: connect k8s:valkey-0 at 2026-11-06T10:00:00.000Z\n"
+        "2026-11-06T10:00:01.123456789Z stdout F hello world\n"
+        "2026-11-06T10:00:02.000000000Z stderr P \n"
+    )}))
+    messages = [d["message"] for d in sorted(fake.of("ci-logs-"), key=lambda d: d["line"])]
+    assert messages == ["# flake0: connect k8s:valkey-0 at 2026-11-06T10:00:00.000Z", "hello world", ""]
+
+
+def test_replays_collapse_and_tracebacks_stay(tmp_path):
+    history = (
+        "unit-v-0: 2026-11-06 10:00:01.000 ERROR boom\n"
+        "Traceback (most recent call last):\n"
+        "unit-v-0: 2026-11-06 10:00:02.000 ERROR boom again\n"
+        "Traceback (most recent call last):\n"
+    )
+    fake = load(write_bundle(tmp_path / "b", logs={"juju-debug-root-lxd-testing.log": (
+        "# flake0: connect root:lxd:testing at 2026-11-06T10:00:00.000Z\n" + history
+        + "# flake0: reconnect 1 at 2026-11-06T10:05:00.000Z after exit 1\n" + history
+    )}))
+    logs = fake.of("ci-logs-")
+    # 2 markers + 4 history lines, each traceback line once per error
+    assert len(logs) == 6
+    assert sum(d["message"].startswith("Traceback") for d in logs) == 2
+
+
+def test_repeated_lines_without_a_reconnect_kept(tmp_path):
+    # cloud-init prints identical table borders in one tick
+    border = "2026-11-06T10:00:01.000000+00:00 host cloud-init[1]: ci-info: +--------+\n"
+    fake = load(write_bundle(tmp_path / "b", logs={"workload/lxd/c/journal.log": (
+        "# flake0: connect lxd:c at 2026-11-06T10:00:00.000Z\n" + border * 3
+    )}))
+    assert len(fake.of("ci-logs-")) == 4
+
+
+def test_badly_shaped_metrics_skipped(tmp_path, capsys):
+    fake = load(write_bundle(tmp_path / "b", metrics=[
+        [metric("cpu", {"usage_steal": 0}, 1793959200000)],
+        [{"name": "cpu", "fields": {}, "tags": {}}],
+        ["x"],
+        [{"name": "cpu", "fields": {}, "tags": {}, "timestamp": 10**20}],
+    ]))
+    assert len(fake.of("ci-metrics-")) == 1
+    assert "skipped 3 badly shaped lines in metrics.json" in capsys.readouterr().err
+
+
+def test_symlinks_and_other_files_skipped(tmp_path):
+    secret = tmp_path / "secret"
+    secret.write_text("2026-11-06T10:00:00Z private key\n")
+    root = write_bundle(tmp_path / "b", logs={"telegraf.resolved.conf": "[agent]\n"})
+    (root / "kernel.log").symlink_to(secret)
+    (root / "juju-status-root-lxd-testing.ndjson").write_text('{"ts": "x", "status": {}}\n')
+    fake = load(root)
+    assert fake.of("ci-logs-") == []
+    assert all("private" not in json.dumps(d) for d in fake.docs.values())
+
+
+def test_meta_docs(tmp_path):
+    fake = load(write_bundle(tmp_path / "b", markers=[
+        {"ts": "2026-11-06T10:00:00.000Z", "event": "start", "nodeid": "t.py::flaky"},
+        {"ts": "2026-11-06T10:00:05.000Z", "event": "finish", "nodeid": "t.py::flaky", "outcome": "failed", "duration": 5.0},
+        {"ts": "2026-11-06T10:00:06.000Z", "event": "start", "nodeid": "t.py::flaky"},
+        {"ts": "2026-11-06T10:00:07.000Z", "event": "finish", "nodeid": "t.py::flaky", "outcome": "passed", "duration": 1.0},
+        '{"ts": "2026-11-06T10:00:0\n',
+        {"ts": "2026-11-06T10:00:08.000Z", "event": "start", "nodeid": "t.py::hung"},
+    ]))
+    meta = fake.of("ci-meta")
+    run = next(d for d in meta if d["type"] == "run")
+    assert run["@timestamp"] == "2026-11-06T10:00:00.000Z"
+    assert run["end"] == "2026-11-06T10:30:00.000Z"
+    assert run["env_start"]["snaps"] == [{"name": "lxd"}]
+    assert run["tag"] == TAGS
+    tests = sorted((d["nodeid"], d["attempt"], d["outcome"], d["@timestamp"], d["end"])
+                   for d in meta if d["type"] == "test")
+    assert tests == [
+        ("t.py::flaky", 1, "failed", "2026-11-06T10:00:00.000Z", "2026-11-06T10:00:05.000Z"),
+        ("t.py::flaky", 2, "passed", "2026-11-06T10:00:06.000Z", "2026-11-06T10:00:07.000Z"),
+        ("t.py::hung", 1, "unfinished", "2026-11-06T10:00:08.000Z", "2026-11-06T10:30:00.000Z"),
+    ]
+
+
+def test_bundle_id_tells_matrix_legs_apart(tmp_path):
+    fake = FakeOpenSearch()
+    load(write_bundle(tmp_path / "a"), fake)
+    load(write_bundle(tmp_path / "b", metrics=[[metric("cpu", {"x": 1}, 1793959200000, {**TAGS, "runner_name": "r2"})]]), fake)
+    assert len({d["bundle_id"] for d in fake.of("ci-meta")}) == 2
+
+
+def test_tags_fall_back_to_env_without_metrics(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_RUN_ID", "99")
+    monkeypatch.delenv("GITHUB_JOB", raising=False)
+    root = write_bundle(tmp_path / "b", metrics=[], logs={"kernel.log": "2026-11-06T10:00:01Z x\n"})
+    fake = load(root)
+    tag = fake.of("ci-logs-")[0]["tag"]
+    assert tag["run_id"] == "99"
+    assert tag["job"] == "local"
+
+
+def test_archive_input(tmp_path):
+    root = write_bundle(tmp_path / "b", logs={"kernel.log": "2026-11-06T10:00:01Z x\n"})
+    archive = tmp_path / "flake0-bundle.tar.gz"
+    subprocess.run(["tar", "-czf", archive, "-C", root, "."], check=True)
+    fake = load(archive)
+    assert [d["file"] for d in fake.of("ci-logs-")] == ["kernel.log"]
+
+
+def test_templates_installed_first_and_403_tolerated(tmp_path, capsys):
+    fake = load(write_bundle(tmp_path / "b"), FakeOpenSearch(template_status=403))
+    assert [p for _, p in fake.calls[:3]] == [
+        "/_index_template/ci-metrics", "/_index_template/ci-logs", "/_index_template/ci-meta"]
+    assert fake.of("ci-metrics-")
+    assert "no permission" in capsys.readouterr().err
+
+
+def test_template_error_fails(tmp_path):
+    assert ingest.main([str(write_bundle(tmp_path / "b"))], request=FakeOpenSearch(template_status=400)) == 1
+
+
+def test_rejected_documents_fail(tmp_path, capsys):
+    class Reject(FakeOpenSearch):
+        def __call__(self, method, path, body=None, ctype="application/json"):
+            if path == "/_bulk":
+                self.reject = {json.loads(body.decode().splitlines()[0])["index"]["_id"]}
+            return super().__call__(method, path, body, ctype)
+
+    assert ingest.main([str(write_bundle(tmp_path / "b"))], request=Reject()) == 1
+    assert "mapper_parsing_exception" in capsys.readouterr().err
+
+
+def test_throttled_bulk_retried(tmp_path, monkeypatch):
+    monkeypatch.setattr(ingest.time, "sleep", lambda _: None)
+    fake = load(write_bundle(tmp_path / "b"), FakeOpenSearch(throttle=2))
+    assert fake.of("ci-metrics-")
+
+
+def test_batches_split(tmp_path, monkeypatch):
+    monkeypatch.setattr(ingest, "BATCH_BYTES", 200)
+    fake = load(write_bundle(tmp_path / "b", logs={"kernel.log": "".join(
+        f"2026-11-06T10:00:{i:02d}Z line {i}\n" for i in range(10))}))
+    assert sum(p == "/_bulk" for _, p in fake.calls) > 1
+    assert len(fake.of("ci-logs-")) == 10
+
+
+@pytest.mark.parametrize("env, error", [
+    ({}, "https://"),
+    ({"OPENSEARCH_URL": "http://localhost:9200"}, "https://"),
+    ({"OPENSEARCH_URL": "https://localhost:9200", "OPENSEARCH_CA": "/nonexistent"}, "/nonexistent"),
+])
+def test_connect_refuses_bad_settings(env, error):
+    with pytest.raises(ingest.Failure, match=error):
+        ingest.connect(env)
+
+
+def test_unreachable_cluster_fails(tmp_path, capsys):
+    request = ingest.connect({"OPENSEARCH_URL": "https://127.0.0.1:1"})
+    assert ingest.main([str(write_bundle(tmp_path / "b"))], request=request) == 1
+    assert "127.0.0.1:1" in capsys.readouterr().err
+
+
+def test_missing_bundle_fails(tmp_path, capsys):
+    assert ingest.main([str(tmp_path / "nope.tar.zst")], request=FakeOpenSearch()) == 1
+    assert "nope.tar.zst" in capsys.readouterr().err

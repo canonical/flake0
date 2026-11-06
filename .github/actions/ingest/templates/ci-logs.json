@@ -1,0 +1,61 @@
+{
+  "index_patterns": [
+    "ci-logs-*"
+  ],
+  "template": {
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "@timestamp": {
+          "type": "date"
+        },
+        "bundle_id": {
+          "type": "keyword"
+        },
+        "tag": {
+          "properties": {
+            "run_id": {
+              "type": "keyword"
+            },
+            "run_attempt": {
+              "type": "keyword"
+            },
+            "repo": {
+              "type": "keyword"
+            },
+            "workflow": {
+              "type": "keyword"
+            },
+            "job": {
+              "type": "keyword"
+            },
+            "sha": {
+              "type": "keyword"
+            },
+            "ref": {
+              "type": "keyword"
+            },
+            "runner_name": {
+              "type": "keyword"
+            },
+            "runner_os": {
+              "type": "keyword"
+            },
+            "image_os": {
+              "type": "keyword"
+            }
+          }
+        },
+        "file": {
+          "type": "keyword"
+        },
+        "line": {
+          "type": "long"
+        },
+        "message": {
+          "type": "text"
+        }
+      }
+    }
+  }
+}
