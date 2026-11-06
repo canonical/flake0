@@ -21,6 +21,12 @@ backends:
       echo "runner:$SPREAD_PASSWORD" | sudo chpasswd
 
       ADDRESS localhost
+    # Spread does not pass the runner's environment. Consumers forward the same
+    # variables, so pytest inside spread loads the collect action's markers plugin.
+    environment:
+      FLAKE0_MARKERS: "$(HOST: echo $FLAKE0_MARKERS)"
+      PYTEST_PLUGINS: "$(HOST: echo $PYTEST_PLUGINS)"
+      PYTHONPATH: "$(HOST: echo $PYTHONPATH)"
     systems:
       - ubuntu-24.04:
           username: runner

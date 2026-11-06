@@ -37,6 +37,8 @@ if [ ! -d "$FLAKE0_COLLECT_DIR" ]; then
   exit 0
 fi
 
+"$(dirname "${BASH_SOURCE[0]}")/env-snapshot.sh" "$FLAKE0_COLLECT_DIR/env-end.json"
+
 # --- stop telegraf: SIGTERM triggers a final flush + clean shutdown -----------
 # $PIDFILE is written by telegraf itself (--pidfile), so this is the collector's
 # pid, not the pid of the sudo wrapper that launched it.
@@ -99,21 +101,29 @@ rm -f "$PIDFILE" "$LAUNCHER_PIDFILE" "$DIR_POINTER"
 # Before the chown and tar below, so nothing is still writing into the directory.
 "$(dirname "${BASH_SOURCE[0]}")/stop-watcher.sh" "$FLAKE0_COLLECT_DIR"
 
+if [ -n "${FLAKE0_TEST_LOG:-}" ] && ! cp -- "$FLAKE0_TEST_LOG" "$FLAKE0_COLLECT_DIR/pytest.log" 2>/dev/null; then
+  echo "flake0-collect: warning: test-log not readable: $FLAKE0_TEST_LOG" >&2
+fi
+
+# Root's pytest writes this inside spread, and a reused runner could not delete it.
+"${SUDO[@]}" rm -rf "$(dirname "${BASH_SOURCE[0]}")/../pytest/__pycache__"
+
 # telegraf may have run as root — hand files back so artifact upload can read them
 if [ ${#SUDO[@]} -gt 0 ]; then
   "${SUDO[@]}" chown -R -h "$(id -u):$(id -g)" "$FLAKE0_COLLECT_DIR" 2>/dev/null || true
 fi
 
 # --- redact secrets before bundling --------------------------------------------
-# Workload journals/stdout and Juju debug logs carry whatever a workload printed,
-# secrets included. Mask them in place now that the watchers have stopped and the
-# files are owned by this user, before they enter the artifact. Metrics are left
-# untouched. Never fails the job; see redact.sh.
+# Every log carries whatever a workload or test printed, secrets included. Mask
+# them in place now that the watchers have stopped and the files are owned by this
+# user, before they enter the artifact. Metrics are left untouched. Never fails the
+# job; see redact.sh.
 REDACT="$(dirname "${BASH_SOURCE[0]}")/redact.sh"
 if [ -x "$REDACT" ]; then
   REDACT_TARGETS=()
   [ -d "$FLAKE0_COLLECT_DIR/workload" ] && REDACT_TARGETS+=("$FLAKE0_COLLECT_DIR/workload")
-  for f in "$FLAKE0_COLLECT_DIR"/juju-debug-*.log; do
+  # A parametrized test's id carries its parameters.
+  for f in "$FLAKE0_COLLECT_DIR"/*.log "$FLAKE0_COLLECT_DIR/markers.ndjson"; do
     [ -e "$f" ] && REDACT_TARGETS+=("$f")
   done
   if [ ${#REDACT_TARGETS[@]} -gt 0 ]; then

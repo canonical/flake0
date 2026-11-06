@@ -61,6 +61,7 @@ if [ -n "$PID" ] && [[ "$PID" =~ ^[0-9]+$ ]] && "${SUDO[@]}" kill -0 "$PID" 2>/d
 fi
 mkdir -p "$FLAKE0_COLLECT_DIR"
 echo "$FLAKE0_COLLECT_DIR" > "${RUNNER_TEMP:-/tmp}/.flake0-collect-dir"
+"$ACTION_DIR/scripts/env-snapshot.sh" "$FLAKE0_COLLECT_DIR/env-start.json"
 
 # --- install pinned Telegraf (static binary) ----------------------------------
 case "$(uname -m)" in
@@ -201,8 +202,9 @@ echo "flake0-collect: running (pid $(cat "$PIDFILE")), writing $FLAKE0_COLLECT_D
 # --- log watchers ------------------------------------------------------------------
 # juju-watch.sh follows Juju model logs and status once a controller appears in
 # the runner's or root's client store. workload-watch.sh follows LXD container
-# and pod logs. It runs as root, because every workload log is root-only, so it
-# is skipped without root or passwordless sudo. sudo runs setsid rather than the
+# and pod logs, and host-watch.sh the kernel log and snapd's journal. Those two
+# run as root, because their sources are root-only, so they are skipped without
+# root or passwordless sudo. sudo runs setsid rather than the
 # watcher, so sudo exits at once. As the watcher's parent, sudo would stop itself
 # when stop-watcher.sh stops the watcher, and never resume. Each watcher prints
 # and writes nothing until it has something to follow. The step would not end
@@ -217,5 +219,18 @@ if [ "${FLAKE0_LOGS:-true}" = true ]; then
   launch_watcher setsid -f "$ACTION_DIR/scripts/juju-watch.sh"
   if [ ${#SUDO[@]} -gt 0 ] || [ "$(id -u)" = 0 ]; then
     launch_watcher "${SUDO[@]}" setsid -f "$ACTION_DIR/scripts/workload-watch.sh"
+    launch_watcher "${SUDO[@]}" setsid -f "$ACTION_DIR/scripts/host-watch.sh"
   fi
+fi
+
+# --- test markers --------------------------------------------------------------
+# Every later step's pytest loads the plugin. Adds to the job's own values, so a
+# PYTHONPATH or PYTEST_PLUGINS set before this step keeps working. Opt-in, because
+# a later step that replaces PYTHONPATH would make pytest fail to import the plugin.
+if [ "${FLAKE0_LOAD_MARKERS:-false}" = true ]; then
+  {
+    echo "FLAKE0_MARKERS=$FLAKE0_COLLECT_DIR/markers.ndjson"
+    echo "PYTEST_PLUGINS=${PYTEST_PLUGINS:+$PYTEST_PLUGINS,}flake0_markers"
+    echo "PYTHONPATH=$ACTION_DIR/pytest${PYTHONPATH:+:$PYTHONPATH}"
+  } >> "$GITHUB_ENV"
 fi

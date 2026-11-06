@@ -43,7 +43,8 @@ inputs:
     default: ""
   logs:
     description: >-
-      Follow Juju and workload logs. 'false' collects host metrics only.
+      Follow Juju, workload, kernel and snapd logs. 'false' skips them.
+      pytest.log comes only from test-log, and test markers only from markers.
     required: false
     default: "true"
   redact-values:
@@ -52,6 +53,19 @@ inputs:
       and workload logs before they are bundled (e.g. write the job's known
       credentials here). Best-effort secret patterns are always applied on top.
       The file must be readable by the user running the 'stop' phase.
+    required: false
+    default: ""
+  markers:
+    description: >-
+      Start phase. Load the test markers pytest plugin in later steps by adding to
+      PYTEST_PLUGINS and PYTHONPATH. A later step that replaces PYTHONPATH then
+      needs to keep the existing value, or pytest stops at startup.
+    required: false
+    default: "false"
+  test-log:
+    description: >-
+      Stop phase. Path to the job's test output, e.g. from `2>&1 | tee`. Copied
+      into the bundle as pytest.log and redacted like the other logs.
     required: false
     default: ""
   cache-telegraf:
@@ -121,6 +135,7 @@ runs:
         TELEGRAF_HOME: ${{ runner.temp }}/flake0-telegraf
         FLAKE0_EXTRA_CONFIG: ${{ inputs.extra-config }}
         FLAKE0_LOGS: ${{ inputs.logs }}
+        FLAKE0_LOAD_MARKERS: ${{ inputs.markers }}
       run: "$GITHUB_ACTION_PATH/scripts/start.sh"
 
     - name: Stop collect
@@ -131,6 +146,7 @@ runs:
         FLAKE0_COLLECT_DIR: ${{ inputs.collect-dir }}
         BUNDLE_PATH: ${{ runner.temp }}/flake0-bundle.tar.zst
         FLAKE0_REDACT_VALUES: ${{ inputs.redact-values }}
+        FLAKE0_TEST_LOG: ${{ inputs.test-log }}
       run: "$GITHUB_ACTION_PATH/scripts/stop.sh"
 
     # Path comes from the stop step rather than being restated here: the bundle
