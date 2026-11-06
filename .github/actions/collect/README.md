@@ -146,6 +146,8 @@ are left untouched to keep them valid JSON.
 `redact-values`, so `test_login[hunter2]` stays readable unless `hunter2` is listed. A listed value
 with a quote, a backslash or a non-ASCII character does not match either, because pytest and JSON
 escape it in the id. Don't parametrize tests with secrets, or give those parameters an `ids=` value.
+A failed test's `failure` text holds whatever the assertion or exception printed, masked the same way.
+The private-key rule needs the key's lines as separate lines, so a key inside `failure` is not masked.
 
 > [!WARNING]
 > The `env-*.json` snapshots are not redacted, and `logs: false` does not turn them off. `changes`
@@ -217,10 +219,12 @@ masks them in its own log, and the [Redaction](#redaction) rules run on top.
 
 ```json
 {"ts":"2026-11-06T10:00:00.123Z","event":"start","nodeid":"tests/integration/test_x.py::test_y"}
-{"ts":"2026-11-06T10:00:12.456Z","event":"finish","nodeid":"tests/integration/test_x.py::test_y","outcome":"failed","duration":12.3}
+{"ts":"2026-11-06T10:00:12.456Z","event":"finish","nodeid":"tests/integration/test_x.py::test_y","outcome":"failed","duration":12.3,"failure":"...\nE       assert 1 == 2\n\ntests/integration/test_x.py:42: AssertionError"}
 ```
 
-`outcome` is `passed`, `skipped`, `failed`, or `error` when setup or teardown failed. An attempt that
+`outcome` is `passed`, `skipped`, `failed`, or `error` when setup or teardown failed. A failed test's
+finish line also has `failure`: the last 4,000 characters of pytest's report for the first phase that
+failed, where the exception and the assertion are. An attempt that
 `pytest-rerunfailures` retries counts as failed, and each attempt gets its own pair of lines.
 `pytest-retry` retries inside one pair, so a test that passes on retry still shows `failed`.
 

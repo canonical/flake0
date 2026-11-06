@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 PATH = os.environ.get("FLAKE0_MARKERS")
 SEVERITY = ["passed", "skipped", "failed", "error"]
+FAILURE_CHARS = 4000  # the end of a traceback, where the exception and the assertion are
 # shortcut: under pytest-xdist the controller and each worker write, so lines repeat. No-op on PYTEST_XDIST_WORKER if a consumer adopts it.
 tests = {}
 
@@ -45,11 +46,15 @@ def pytest_runtest_logstart(nodeid):
 def pytest_runtest_logreport(report):
     test = tests.get(report.nodeid)
     if test:
-        test["outcome"] = max(test["outcome"], phase_outcome(report), key=SEVERITY.index)
+        outcome = phase_outcome(report)
+        test["outcome"] = max(test["outcome"], outcome, key=SEVERITY.index)
         test["duration"] += report.duration
+        # The first failing phase is the cause: a teardown error after a failed call adds less.
+        if outcome in ("failed", "error") and "failure" not in test:
+            test["failure"] = report.longreprtext[-FAILURE_CHARS:]
 
 
 def pytest_runtest_logfinish(nodeid):
     test = tests.pop(nodeid, None)
     if test:
-        write("finish", nodeid, outcome=test["outcome"], duration=round(test["duration"], 3))
+        write("finish", nodeid, **{**test, "duration": round(test["duration"], 3)})

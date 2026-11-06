@@ -73,6 +73,23 @@ def test_outcomes(run, markers):
     }
 
 
+def test_failure_text(run, markers):
+    run()
+    finish = {r["nodeid"].split("::")[1]: r for r in lines(markers) if r["event"] == "finish"}
+    assert "assert False" in finish["test_fail"]["failure"]
+    assert "RuntimeError: setup failed" in finish["test_setup_error"]["failure"]
+    assert "failure" not in finish["test_pass"]
+    assert "failure" not in finish["test_skip"]
+
+
+def test_failure_text_keeps_its_end(run, markers, pytester):
+    pytester.makepyfile(test_inner='def test_long():\n    raise ValueError("a" * 10000 + " END")\n')
+    run()
+    failure = next(r["failure"] for r in lines(markers) if r["event"] == "finish")
+    assert len(failure) == 4000
+    assert "END" in failure[-100:]  # pytest ends with the location, "test_inner.py:2: ValueError"
+
+
 def test_failed_teardown_is_an_error(run, markers, pytester):
     pytester.makepyfile(
         test_inner="""

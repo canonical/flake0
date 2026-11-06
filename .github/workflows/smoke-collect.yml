@@ -143,7 +143,8 @@ jobs:
           jq -e 'any(.snaps[]; .name == "hello-world")' /tmp/bundle/env-end.json
           jq -e 'all(.snaps[]; .name != "hello-world")' /tmp/bundle/env-start.json
           jq -es 'group_by(.nodeid) | length == 2 and all(map(.event) == ["start", "finish"])' /tmp/bundle/markers.ndjson
-          jq -es 'any(.event == "finish" and (.nodeid | endswith("::test_fail")) and .outcome == "failed")' /tmp/bundle/markers.ndjson
+          jq -es 'any(.event == "finish" and (.nodeid | endswith("::test_fail")) and .outcome == "failed"
+                      and (.failure | contains("intentional failure for collect smoke")))' /tmp/bundle/markers.ndjson
 
           # This runner has no Juju, LXD containers or pods, so the log watchers
           # must leave nothing in the bundle. consumer-sim.yml tests them.

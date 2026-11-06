@@ -99,7 +99,8 @@ they come from the job's `GITHUB_*` variables, or are `local`.
   by `bundle_id`.
 - **Meta** has one `type: run` document per bundle, with `env_start` and `env_end`, and one
   `type: test` document per test attempt, with `nodeid`, `attempt`, `outcome`, `@timestamp` (start),
-  `end` and `duration`. A test that never finished, for example because the job timed out, has
+  `end`, `duration`, and for a failed attempt `failure`, the end of pytest's report as searchable
+  text. A test that never finished, for example because the job timed out, has
   `outcome: unfinished` and ends when the job did. Snap lists and snapd changes are stored but not
   searchable.
 - **Juju status** has one document per 30 s snapshot, with `controller`, `model`

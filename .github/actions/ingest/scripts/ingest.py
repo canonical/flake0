@@ -265,9 +265,9 @@ def meta_docs(files, bundle_id, tags, env_start, env_end):
         run["@timestamp"] = start
     yield "ci-meta", bundle_id, run
 
-    def test(nodeid, attempt, started, finished, outcome, duration):
+    def test(nodeid, attempt, started, finished, outcome, duration, failure=None):
         doc = {"type": "test", "bundle_id": bundle_id, "tag": tags, "nodeid": nodeid, "attempt": attempt,
-               "outcome": outcome, "@timestamp": started, "end": finished, "duration": duration}
+               "outcome": outcome, "@timestamp": started, "end": finished, "duration": duration, "failure": failure}
         return "ci-meta", doc_id(bundle_id, nodeid, attempt), doc
 
     if "markers.ndjson" not in files:
@@ -283,7 +283,7 @@ def meta_docs(files, bundle_id, tags, env_start, env_end):
             running.setdefault(nodeid, []).append((attempts[nodeid], ts))
         elif event == "finish" and running.get(nodeid):
             attempt, started = running[nodeid].pop(0)
-            yield test(nodeid, attempt, started, ts, m.get("outcome"), m.get("duration"))
+            yield test(nodeid, attempt, started, ts, m.get("outcome"), m.get("duration"), m.get("failure"))
     # A test the job's timeout killed has a start and no finish.
     for nodeid, opened in running.items():
         for attempt, started in opened:

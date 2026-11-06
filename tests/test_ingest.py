@@ -317,7 +317,8 @@ def test_symlinks_and_other_files_skipped(tmp_path):
 def test_meta_docs(tmp_path):
     fake = load(write_bundle(tmp_path / "b", markers=[
         {"ts": "2026-11-06T10:00:00.000Z", "event": "start", "nodeid": "t.py::flaky"},
-        {"ts": "2026-11-06T10:00:05.000Z", "event": "finish", "nodeid": "t.py::flaky", "outcome": "failed", "duration": 5.0},
+        {"ts": "2026-11-06T10:00:05.000Z", "event": "finish", "nodeid": "t.py::flaky", "outcome": "failed", "duration": 5.0,
+         "failure": "E   assert 1 == 2"},
         {"ts": "2026-11-06T10:00:06.000Z", "event": "start", "nodeid": "t.py::flaky"},
         {"ts": "2026-11-06T10:00:07.000Z", "event": "finish", "nodeid": "t.py::flaky", "outcome": "passed", "duration": 1.0},
         '{"ts": "2026-11-06T10:00:0\n',
@@ -329,6 +330,7 @@ def test_meta_docs(tmp_path):
     assert run["end"] == "2026-11-06T10:30:00.000Z"
     assert run["env_start"]["snaps"] == [{"name": "lxd"}]
     assert run["tag"] == TAGS
+    assert [d.get("failure") for d in meta if d["type"] == "test" and d["outcome"] == "failed"] == ["E   assert 1 == 2"]
     tests = sorted((d["nodeid"], d["attempt"], d["outcome"], d["@timestamp"], d["end"])
                    for d in meta if d["type"] == "test")
     assert tests == [
