@@ -197,3 +197,6 @@ script warns, and that index needs a reindex.
   `line` shows them in order.
 - A Kubernetes line split into partial (`P`) records stays split.
 - `pytest.log` lines usually have no time. Use the test documents for timing.
+- In `job.log`, the `step` of a `run:` step is the first line of its script, such as `set -x`, not
+  the step's `name:`. The raw job log only has `##[group]Run <first line>`. A `uses:` step shows
+  the action, such as `actions/checkout@<sha>`.
