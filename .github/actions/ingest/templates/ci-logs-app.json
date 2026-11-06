@@ -4,5 +4,20 @@
   ],
   "composed_of": [
     "ci-logs-common"
-  ]
+  ],
+  "template": {
+    "mappings": {
+      "properties": {
+        "container": {
+          "type": "keyword"
+        },
+        "snap": {
+          "type": "keyword"
+        },
+        "log": {
+          "type": "keyword"
+        }
+      }
+    }
+  }
 }

@@ -65,18 +65,19 @@ TLS is always verified. There is no option to turn that off.
 
 The month comes from each document's own time. `telegraf.resolved.conf` is not loaded.
 
-Each log format has its own index, and `ci-logs-*` searches all of them:
+Each log format has its own index, and `ci-logs-*` searches all of them. Each source parses its
+own fields out of the line:
 
-| Source | Files |
-|---|---|
-| `juju` | `juju-debug-*.log` |
-| `k8s` | `workload/k8s/*.log`, pod container output |
-| `lxd` | `workload/lxd/<container>/journal.log` |
-| `app` | the other files under `workload/lxd/`, the snaps' own log files |
-| `host` | `kernel.log`, `snapd.log` |
-| `job` | `job.log` |
-| `pytest` | `pytest.log` |
-| `flake0` | `telegraf.log` and the watchers' own logs |
+| Source | Files | Parsed fields |
+|---|---|---|
+| `juju` | `juju-debug-*.log` | `controller`, `model` (from the connect marker), `entity` (`unit-valkey-0`), `level`, `module` |
+| `k8s` | `workload/k8s/*.log`, pod container output | `pod`, `namespace`, `container` (from the file name), `stream`, `service` (pebble's `[name]`, such as `container-agent`) |
+| `lxd` | `workload/lxd/<container>/journal.log` | `container`, `host`, `process`, `pid` |
+| `app` | the other files under `workload/lxd/`, the snaps' own log files | `container`, `snap`, `log` (from the path) |
+| `host` | `kernel.log`, `snapd.log` | snapd lines: `host`, `process`, `pid` |
+| `job` | `job.log` | `step`, from the last `##[group]Run <step>` line |
+| `pytest` | `pytest.log` | none |
+| `flake0` | `telegraf.log` and the watchers' own logs | none |
 
 Every document carries `bundle_id`, which tells matrix legs and repeated jobs apart. Logs and meta
 documents also carry the run tags as `tag.run_id`, `tag.repo`, `tag.job` and so on, the same field
@@ -86,11 +87,12 @@ they come from the job's `GITHUB_*` variables, or are `local`.
 - **Metrics** have the shape Telegraf's own `outputs.opensearch` writes: `@timestamp`,
   `measurement_name`, `tag.*` and `<measurement>.<field>`, for example `pressure.avg10`. Live
   streaming can then share these indices later. Every number is mapped as `double`.
-- **Logs** have `file`, `line`, `message` and `@timestamp`. A line without a time of its own, such
-  as a traceback line, takes the time of the line before it. A line with no time before it, such as
+- **Logs** have `file`, `line`, `message`, `@timestamp` and their source's fields. `message` holds
+  what follows the parsed prefix: `boom` for `unit-valkey-0: 2026-11-06 10:00:01.000 ERROR
+  unit.valkey/0.juju-log boom`. A line without a time of its own, such as a traceback line, takes
+  the time and fields of the line before it, so `level: ERROR` finds the whole traceback. A line with no time before it, such as
   most of `pytest.log`, has no `@timestamp` and doesn't show up in time-filtered views. Search those
-  by `bundle_id`. In
-  `workload/k8s/`, the time, stream and tag the kubelet adds are cut from `message`.
+  by `bundle_id`.
 - **Meta** has one `type: run` document per bundle, with `env_start` and `env_end`, and one
   `type: test` document per test attempt, with `nodeid`, `attempt`, `outcome`, `@timestamp` (start),
   `end` and `duration`. A test that never finished, for example because the job timed out, has
@@ -131,6 +133,15 @@ GET ci-metrics-*/_search
 {"sort": ["@timestamp"], "query": {"bool": {"filter": [
   {"term": {"bundle_id": "<bundle_id>"}},
   {"term": {"measurement_name": "pressure"}},
+  {"range": {"@timestamp": {"gte": "<@timestamp>", "lte": "<end>"}}}]}}}
+```
+
+Juju errors and warnings during a test:
+
+```json
+GET ci-logs-juju-*/_search
+{"sort": ["@timestamp", "line"], "query": {"bool": {"filter": [
+  {"term": {"bundle_id": "<bundle_id>"}}, {"terms": {"level": ["ERROR", "WARNING"]}},
   {"range": {"@timestamp": {"gte": "<@timestamp>", "lte": "<end>"}}}]}}}
 ```
 

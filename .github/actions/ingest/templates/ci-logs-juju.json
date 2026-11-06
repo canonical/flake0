@@ -4,5 +4,26 @@
   ],
   "composed_of": [
     "ci-logs-common"
-  ]
+  ],
+  "template": {
+    "mappings": {
+      "properties": {
+        "controller": {
+          "type": "keyword"
+        },
+        "model": {
+          "type": "keyword"
+        },
+        "entity": {
+          "type": "keyword"
+        },
+        "level": {
+          "type": "keyword"
+        },
+        "module": {
+          "type": "keyword"
+        }
+      }
+    }
+  }
 }

@@ -34,7 +34,13 @@ RUN_TAGS = {
 }
 METRICS = re.compile(r"metrics[^/]*\.json")  # Telegraf rotates to metrics.<time>-<n>.json
 JUJU_STATUS = re.compile(r"juju-status-[^/]*\.ndjson")
-CRI = re.compile(r"\S+ (?:stdout|stderr) [FP](?: |$)")
+# Each log format's prefix, parsed into fields. `message` keeps what follows.
+JUJU_LINE = re.compile(r"(\S+): \S+ \S+ (\S+) (\S+) ?(.*)")  # entity: date time LEVEL module
+CRI = re.compile(r"\S+ (stdout|stderr) [FP](?: |$)")  # time stream tag, from the kubelet
+PEBBLE = re.compile(r"\S+ \[([^\]]+)\] ?(.*)")  # time [service], from pebble inside a container
+JOURNAL = re.compile(r"\S+ (\S+) ([^\s\[:]+)(?:\[(\d+)\])?: ?(.*)")  # time host process[pid]
+CONNECT = re.compile(r"# flake0: connect [^:\s]+:([^:\s]+):(\S+) at ")  # juju-watch.sh: store:controller:model
+K8S_FILE = re.compile(r"workload/k8s/([^_]+)_([^_]+)_(.+)-[0-9a-f]{64}\.log")  # pod_namespace_container-id
 
 ISO = r"(\d{4}-\d\d-\d\d)[T ](\d\d:\d\d:\d\d)(?:[.,](\d+))?(Z|[+-]\d\d:?\d\d)?"
 TIMES = [
@@ -178,26 +184,66 @@ def log_source(rel):
     return {"kernel.log": "host", "snapd.log": "host", "job.log": "job", "pytest.log": "pytest"}.get(rel, "flake0")
 
 
+def path_fields(rel):
+    """Fields a log file's path gives every line of it."""
+    if m := K8S_FILE.fullmatch(rel):
+        return {"pod": m[1], "namespace": m[2], "container": m[3]}
+    if rel.startswith("workload/lxd/"):
+        container, name = rel.split("/")[2:4]
+        if name == "journal.log":
+            return {"container": container}
+        snap, _, log = name.partition("_")  # <snap>_<dir>_<file>, and snap names have no _
+        return {"container": container, "snap": snap, "log": log}
+    return {}
+
+
+def parse_line(source, rel, line, state):
+    """Returns (fields, message) for a line with its own time, in its source's format, or None."""
+    if source == "juju" and (m := JUJU_LINE.match(line)):
+        return {"entity": m[1], "level": m[2], "module": m[3]}, m[4]
+    if source == "k8s" and (m := CRI.match(line)):
+        fields, message = {"stream": m[1]}, line[m.end():]
+        if p := PEBBLE.match(message):
+            fields["service"], message = p[1], p[2]
+        return fields, message
+    if (source == "lxd" or rel == "snapd.log") and (m := JOURNAL.match(line)):
+        return {k: v for k, v in (("host", m[1]), ("process", m[2]), ("pid", m[3])) if v}, m[4]
+    if rel in ("kernel.log", "job.log"):  # the time, then the message
+        message = line.partition(" ")[2]
+        if rel == "kernel.log":
+            return {}, message
+        if message.startswith("##[group]Run "):
+            state["step"] = message[len("##[group]Run "):]
+        return ({"step": state["step"]} if "step" in state else {}), message
+    return None
+
+
 def log_docs(files, bundle_id, tags, fallback_month):
     for rel in (f for f in files if f.endswith(".log")):
         ts = anchor = None
         offset = 0
-        seen = {}
-        cri = rel.startswith("workload/k8s/")
-        index = f"ci-logs-{log_source(rel)}"
+        seen, parsed, state = {}, {}, {}
+        source = log_source(rel)
+        index = f"ci-logs-{source}"
+        file_fields = path_fields(rel)
         for n, line in lines(files, rel):
             if not line.strip():
                 continue
-            if line.startswith("# flake0: "):
-                seen = {}  # a follower reconnected, and may replay what came before
+            marker = line.startswith("# flake0: ")
+            if marker:
+                seen, parsed = {}, {}  # a follower reconnected, and may replay what came before
+                if source == "juju" and (m := CONNECT.match(line)):
+                    file_fields = {"controller": m[1], "model": m[2]}
             if own := parse_ts(line):
                 ts, anchor, offset = own, line, 0
             else:
                 offset += 1
             message = line
-            if cri and (m := CRI.match(line)):
-                message = line[m.end():]
-            doc = {"bundle_id": bundle_id, "tag": tags, "file": rel, "line": n, "message": message}
+            # A line without its own time, such as a traceback's, keeps the fields of the line above.
+            if own and not marker and (result := parse_line(source, rel, line, state)):
+                parsed, message = result
+            doc = {"bundle_id": bundle_id, "tag": tags, "file": rel, "line": n,
+                   **file_fields, **parsed, "message": message}
             if ts:
                 doc["@timestamp"] = ts
             # Keyed on content and its count since the last marker, not the line number, so the

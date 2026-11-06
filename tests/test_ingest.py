@@ -163,7 +163,7 @@ def test_log_docs(tmp_path):
     }))
     kernel = sorted((d for d in fake.of("ci-logs-") if d["file"] == "kernel.log"), key=lambda d: d["line"])
     assert [(d["line"], d["message"], d["@timestamp"]) for d in kernel] == [
-        (1, "2026-11-06T10:00:01,000000+00:00 Out of memory", "2026-11-06T10:00:01.000Z"),
+        (1, "Out of memory", "2026-11-06T10:00:01.000Z"),
         (3, " continuation", "2026-11-06T10:00:01.000Z"),
     ]
     assert kernel[0]["tag"] == TAGS
@@ -180,6 +180,82 @@ def test_cri_prefix_stripped(tmp_path):
     )}))
     messages = [d["message"] for d in sorted(fake.of("ci-logs-"), key=lambda d: d["line"])]
     assert messages == ["# flake0: connect k8s:valkey-0 at 2026-11-06T10:00:00.000Z", "hello world", ""]
+
+
+def fields(fake, rel):
+    """The parsed fields and message of each line of `rel`, in order."""
+    shared = {"bundle_id", "tag", "file", "line", "@timestamp"}
+    docs = sorted((d for d in fake.of("ci-logs-") if d["file"] == rel), key=lambda d: d["line"])
+    return [{k: v for k, v in d.items() if k not in shared} for d in docs]
+
+
+def test_juju_fields(tmp_path):
+    rel = "juju-debug-root-concierge-lxd-testing.log"
+    fake = load(write_bundle(tmp_path / "b", logs={rel: (
+        "# flake0: connect root:concierge-lxd:testing at 2026-11-06T10:00:00.000Z\n"
+        "unit-valkey-0: 2026-11-06 10:00:01.000 ERROR unit.valkey/0.juju-log boom\n"
+        "Traceback (most recent call last):\n"
+        "# flake0: reconnect 1 at 2026-11-06T10:05:00.000Z after exit 1\n"
+    )}))
+    where = {"controller": "concierge-lxd", "model": "testing"}
+    error = {**where, "entity": "unit-valkey-0", "level": "ERROR", "module": "unit.valkey/0.juju-log"}
+    assert fields(fake, rel) == [
+        {**where, "message": "# flake0: connect root:concierge-lxd:testing at 2026-11-06T10:00:00.000Z"},
+        {**error, "message": "boom"},
+        {**error, "message": "Traceback (most recent call last):"},  # takes the fields above
+        {**where, "message": "# flake0: reconnect 1 at 2026-11-06T10:05:00.000Z after exit 1"},
+    ]
+
+
+def test_k8s_fields(tmp_path):
+    rel = "workload/k8s/opensearch-0_testing_charm-" + "a" * 64 + ".log"
+    fake = load(write_bundle(tmp_path / "b", logs={rel: (
+        "2026-11-06T07:31:52.929628643Z stdout F 2026-11-06T07:31:52.929Z [container-agent] starting unit\n"
+        "2026-11-06T07:31:53.000000000Z stderr F level=info msg=plain\n"
+    )}))
+    pod = {"pod": "opensearch-0", "namespace": "testing", "container": "charm"}
+    assert fields(fake, rel) == [
+        {**pod, "stream": "stdout", "service": "container-agent", "message": "starting unit"},
+        {**pod, "stream": "stderr", "message": "level=info msg=plain"},
+    ]
+
+
+def test_journal_fields(tmp_path):
+    lxd, snapd = "workload/lxd/juju-366b0b-0/journal.log", "snapd.log"
+    fake = load(write_bundle(tmp_path / "b", logs={
+        lxd: ("2026-11-06T06:41:11.729199+00:00 juju-366b0b-0 systemd[1]: Started x.\n"
+              "2026-11-06T06:41:12.000000+00:00 juju-366b0b-0 kernel: hello\n"
+              "-- Boot 1234 --\n"),
+        snapd: "2026-11-06T06:41:13.000000+00:00 runner snapd[812]: api.go:12: refresh\n",
+    }))
+    container = {"container": "juju-366b0b-0"}
+    assert fields(fake, lxd) == [
+        {**container, "host": "juju-366b0b-0", "process": "systemd", "pid": "1", "message": "Started x."},
+        {**container, "host": "juju-366b0b-0", "process": "kernel", "message": "hello"},
+        {**container, "host": "juju-366b0b-0", "process": "kernel", "message": "-- Boot 1234 --"},
+    ]
+    assert fields(fake, snapd) == [{"host": "runner", "process": "snapd", "pid": "812", "message": "api.go:12: refresh"}]
+
+
+def test_app_fields(tmp_path):
+    rel = "workload/lxd/juju-366b0b-0/valkey-charmed_valkey_topology_observer.log"
+    line = "2026-11-06 06:46:02 INFO     Starting new observer"
+    fake = load(write_bundle(tmp_path / "b", logs={rel: line + "\n"}))
+    assert fields(fake, rel) == [{"container": "juju-366b0b-0", "snap": "valkey-charmed",
+                                  "log": "valkey_topology_observer.log", "message": line}]
+
+
+def test_job_steps(tmp_path):
+    fake = load(write_bundle(tmp_path / "b", logs={"job.log": (
+        "2026-11-06T06:41:20.1000000Z Current runner version: '2.338.2'\n"
+        "2026-11-06T06:41:21.1000000Z ##[group]Run actions/checkout@v4\n"
+        "2026-11-06T06:41:22.1000000Z Syncing repository\n"
+    )}))
+    assert fields(fake, "job.log") == [
+        {"message": "Current runner version: '2.338.2'"},
+        {"step": "actions/checkout@v4", "message": "##[group]Run actions/checkout@v4"},
+        {"step": "actions/checkout@v4", "message": "Syncing repository"},
+    ]
 
 
 def test_replays_collapse_and_tracebacks_stay(tmp_path):

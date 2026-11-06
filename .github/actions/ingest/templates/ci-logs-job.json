@@ -4,5 +4,14 @@
   ],
   "composed_of": [
     "ci-logs-common"
-  ]
+  ],
+  "template": {
+    "mappings": {
+      "properties": {
+        "step": {
+          "type": "keyword"
+        }
+      }
+    }
+  }
 }

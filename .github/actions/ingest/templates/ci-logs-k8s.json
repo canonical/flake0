@@ -4,5 +4,26 @@
   ],
   "composed_of": [
     "ci-logs-common"
-  ]
+  ],
+  "template": {
+    "mappings": {
+      "properties": {
+        "namespace": {
+          "type": "keyword"
+        },
+        "pod": {
+          "type": "keyword"
+        },
+        "container": {
+          "type": "keyword"
+        },
+        "stream": {
+          "type": "keyword"
+        },
+        "service": {
+          "type": "keyword"
+        }
+      }
+    }
+  }
 }

@@ -4,5 +4,20 @@
   ],
   "composed_of": [
     "ci-logs-common"
-  ]
+  ],
+  "template": {
+    "mappings": {
+      "properties": {
+        "host": {
+          "type": "keyword"
+        },
+        "process": {
+          "type": "keyword"
+        },
+        "pid": {
+          "type": "keyword"
+        }
+      }
+    }
+  }
 }
