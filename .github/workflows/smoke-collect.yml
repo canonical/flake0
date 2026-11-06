@@ -340,6 +340,7 @@ jobs:
           # PSI while test_fail was failing
           T=$(os '/ci-meta/_search' -d '{"query": {"bool": {"filter": [
             {"term": {"outcome": "failed"}}, {"wildcard": {"nodeid": "*::test_fail"}}]}}}' | jq -ec '.hits.hits[0]._source')
+          jq -e '.failure | contains("intentional failure for collect smoke")' <<< "$T"
           os '/ci-metrics-*/_count' -d "$(jq -n --argjson t "$T" '{query: {bool: {filter: [
             {term: {bundle_id: $t.bundle_id}}, {term: {measurement_name: "pressure"}},
             {range: {"@timestamp": {gte: $t["@timestamp"], lte: $t.end}}}]}}}')" | jq -e '.count > 0'

@@ -211,10 +211,10 @@ def parse_line(source, rel, line, state):
         return fields, message
     if (source == "lxd" or rel == "snapd.log") and (m := JOURNAL.match(line)):
         return {k: v for k, v in (("host", m[1]), ("process", m[2]), ("pid", m[3])) if v}, m[4]
-    if rel in ("kernel.log", "job.log"):  # the time, then the message
-        message = line.partition(" ")[2]
-        if rel == "kernel.log":
-            return {}, message
+    message = line.partition(" ")[2]  # kernel.log and job.log: the time, then the message
+    if rel == "kernel.log":
+        return {}, message
+    if rel == "job.log":
         if message.startswith("##[group]Run "):
             state["step"] = message[len("##[group]Run "):]
         return ({"step": state["step"]} if "step" in state else {}), message

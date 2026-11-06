@@ -81,8 +81,8 @@ own fields out of the line:
 | `job` | `job.log` | `step`, from the last `##[group]Run <step>` line |
 | `pytest` | `pytest.log` | none |
 
-Every document carries `bundle_id`, which tells matrix legs and repeated jobs apart. Logs and meta
-documents also carry the run tags as `tag.run_id`, `tag.repo`, `tag.job` and so on, the same field
+Every document carries `bundle_id`, which tells matrix legs and repeated jobs apart. Logs, meta and
+Juju status documents also carry the run tags as `tag.run_id`, `tag.repo`, `tag.job` and so on, the same field
 names the metrics use. The tags come from `metrics.json`. If the collector never wrote a metric,
 they come from the job's `GITHUB_*` variables, or are `local`.
 
