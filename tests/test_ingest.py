@@ -24,13 +24,15 @@ class FakeOpenSearch:
     """Records requests and answers like OpenSearch, failing items listed in `reject`."""
 
     def __init__(self, template_status=200, reject=(), throttle=0, mapping_status=200):
-        self.calls, self.docs = [], {}
+        self.calls, self.docs, self.bodies = [], {}, {}
         self.template_status, self.reject, self.throttle = template_status, reject, throttle
         self.mapping_status = mapping_status
 
     def __call__(self, method, path, body=None, ctype="application/json"):
         self.calls.append((method, path))
-        if path.startswith("/_index_template/"):
+        if method == "PUT":
+            self.bodies[path] = json.loads(body)
+        if path.startswith(("/_index_template/", "/_component_template/")):
             json.loads(body)
             return self.template_status, {}
         if path.endswith("/_mapping"):
@@ -165,7 +167,7 @@ def test_log_docs(tmp_path):
         (3, " continuation", "2026-11-06T10:00:01.000Z"),
     ]
     assert kernel[0]["tag"] == TAGS
-    pytest_docs = [d for d in fake.of("ci-logs-2026.11") if d["file"] == "pytest.log"]
+    pytest_docs = [d for d in fake.of("ci-logs-pytest-2026.11")]
     assert len(pytest_docs) == 2
     assert all("@timestamp" not in d for d in pytest_docs)
 
@@ -304,12 +306,32 @@ def test_archive_input(tmp_path):
     assert [d["file"] for d in fake.of("ci-logs-")] == ["kernel.log"]
 
 
+LOG_SOURCES = ["app", "flake0", "host", "job", "juju", "k8s", "lxd", "pytest"]
+
+
 def test_templates_and_mappings_installed_first(tmp_path, capsys):
     fake = load(write_bundle(tmp_path / "b"))
-    assert [p for _, p in fake.calls[:6]] == [
-        "/_index_template/ci-metrics", "/ci-metrics-*/_mapping", "/_index_template/ci-logs",
-        "/ci-logs-*/_mapping", "/_index_template/ci-meta", "/ci-meta/_mapping"]
+    puts = [p for _, p in fake.calls if p != "/_bulk"]
+    assert puts == ["/_component_template/ci-logs-common"] + [
+        p for name, pattern in [*((f"ci-logs-{s}", f"ci-logs-{s}-*") for s in LOG_SOURCES),
+                                ("ci-meta", "ci-meta"), ("ci-metrics", "ci-metrics-*")]
+        for p in (f"/_index_template/{name}", f"/{pattern}/_mapping")]
+    # each log index gets the shared fields of the component template
+    assert fake.bodies["/ci-logs-juju-*/_mapping"]["properties"]["message"] == {"type": "text"}
+    assert fake.bodies["/_index_template/ci-logs-juju"]["composed_of"] == ["ci-logs-common"]
     assert capsys.readouterr().err == ""
+
+
+def test_logs_split_by_source(tmp_path):
+    sources = {
+        "juju-debug-root-lxd-testing.log": "juju", "workload/k8s/valkey-0_testing_charm-1.log": "k8s",
+        "workload/lxd/c1/journal.log": "lxd", "workload/lxd/c1/valkey-charmed_valkey_valkey.log": "app",
+        "kernel.log": "host", "snapd.log": "host", "job.log": "job", "pytest.log": "pytest",
+        "telegraf.log": "flake0", "watcher.log": "flake0", "workload-watcher.log": "flake0",
+    }
+    fake = load(write_bundle(tmp_path / "b", logs={rel: "2026-11-06T10:00:01Z x\n" for rel in sources}))
+    indices = {doc["file"]: index for (index, _), doc in fake.docs.items() if index.startswith("ci-logs-")}
+    assert indices == {rel: f"ci-logs-{source}-2026.11" for rel, source in sources.items()}
 
 
 def test_template_403_tolerated(tmp_path, capsys):

@@ -167,12 +167,24 @@ def metric_docs(files, bundle_id):
             warn(f"skipped {bad} badly shaped line{'s' * (bad > 1)} in {rel}")
 
 
+def log_source(rel):
+    """Names the ci-logs-<source>-* index of a bundle file, one per log format."""
+    if rel.startswith("juju-debug-"):
+        return "juju"
+    if rel.startswith("workload/k8s/"):
+        return "k8s"
+    if rel.startswith("workload/lxd/"):
+        return "lxd" if rel.endswith("/journal.log") else "app"
+    return {"kernel.log": "host", "snapd.log": "host", "job.log": "job", "pytest.log": "pytest"}.get(rel, "flake0")
+
+
 def log_docs(files, bundle_id, tags, fallback_month):
     for rel in (f for f in files if f.endswith(".log")):
         ts = anchor = None
         offset = 0
         seen = {}
         cri = rel.startswith("workload/k8s/")
+        index = f"ci-logs-{log_source(rel)}"
         for n, line in lines(files, rel):
             if not line.strip():
                 continue
@@ -193,7 +205,7 @@ def log_docs(files, bundle_id, tags, fallback_month):
             # documents, while a line that really repeats keeps its own.
             key = (anchor, offset, line)
             seen[key] = seen.get(key, -1) + 1
-            yield f"ci-logs-{month(ts) if ts else fallback_month}", doc_id(bundle_id, rel, *key, seen[key]), doc
+            yield f"{index}-{month(ts) if ts else fallback_month}", doc_id(bundle_id, rel, *key, seen[key]), doc
 
 
 def meta_docs(files, bundle_id, tags, env_start, env_end):
@@ -296,19 +308,37 @@ def connect(env):
     return request
 
 
+def merge_mappings(*mappings):
+    merged = {}
+    for m in mappings:
+        for key, value in m.items():
+            merged[key] = {**merged.get(key, {}), **value} if key == "properties" else value
+    return merged
+
+
 def install_templates(request):
-    for name in ("ci-metrics", "ci-logs", "ci-meta"):
-        with open(os.path.join(TEMPLATES, f"{name}.json")) as f:
-            template = json.load(f)
-        status, resp = request("PUT", f"/_index_template/{name}", json.dumps(template).encode())
+    """Installs templates/*.json. A file without index_patterns is a component template,
+    shared by the index templates that list it in composed_of, so it goes first."""
+    templates = {}
+    for name in sorted(os.listdir(TEMPLATES)):
+        with open(os.path.join(TEMPLATES, name)) as f:
+            templates[name[:-len(".json")]] = json.load(f)
+    components = {name: t for name, t in templates.items() if "index_patterns" not in t}
+    for name, template in sorted(templates.items(), key=lambda item: item[0] not in components):
+        kind = "_component_template" if name in components else "_index_template"
+        status, resp = request("PUT", f"/{kind}/{name}", json.dumps(template).encode())
         if status == 403:
             warn(f"no permission to install the {name} template, loading with the one in place")
         elif status >= 300:
             raise Failure(f"installing the {name} template failed: HTTP {status} {resp}")
+        if name in components:
+            continue
         # A template applies only when an index is created, so add new fields to existing ones
         # too. 404 means no index yet. A field that changed type needs a reindex.
         pattern = template["index_patterns"][0]
-        status, resp = request("PUT", f"/{pattern}/_mapping", json.dumps(template["template"]["mappings"]).encode())
+        mappings = merge_mappings(*(components[c]["template"]["mappings"] for c in template.get("composed_of", [])),
+                                  template.get("template", {}).get("mappings", {}))
+        status, resp = request("PUT", f"/{pattern}/_mapping", json.dumps(mappings).encode())
         if status not in (200, 404):
             warn(f"could not update the mapping of {pattern}, loading anyway: HTTP {status} {resp}")
 

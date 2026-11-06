@@ -60,10 +60,23 @@ TLS is always verified. There is no option to turn that off.
 | Index | One document per | From |
 |---|---|---|
 | `ci-metrics-YYYY.MM` | Telegraf metric | `metrics*.json` |
-| `ci-logs-YYYY.MM` | non-empty log line | every `*.log` file, including `workload/` |
+| `ci-logs-<source>-YYYY.MM` | non-empty log line | every `*.log` file, one index per source below |
 | `ci-meta` | run, test attempt, and Juju status snapshot | `env-start.json`, `env-end.json`, `markers.ndjson`, `juju-status-*.ndjson` |
 
 The month comes from each document's own time. `telegraf.resolved.conf` is not loaded.
+
+Each log format has its own index, and `ci-logs-*` searches all of them:
+
+| Source | Files |
+|---|---|
+| `juju` | `juju-debug-*.log` |
+| `k8s` | `workload/k8s/*.log`, pod container output |
+| `lxd` | `workload/lxd/<container>/journal.log` |
+| `app` | the other files under `workload/lxd/`, the snaps' own log files |
+| `host` | `kernel.log`, `snapd.log` |
+| `job` | `job.log` |
+| `pytest` | `pytest.log` |
+| `flake0` | `telegraf.log` and the watchers' own logs |
 
 Every document carries `bundle_id`, which tells matrix legs and repeated jobs apart. Logs and meta
 documents also carry the run tags as `tag.run_id`, `tag.repo`, `tag.job` and so on, the same field
@@ -134,7 +147,7 @@ GET ci-meta/_search
 One bundle's kernel log, in order:
 
 ```json
-GET ci-logs-*/_search
+GET ci-logs-host-*/_search
 {"size": 1000, "sort": ["line"], "query": {"bool": {"filter": [
   {"term": {"bundle_id": "<bundle_id>"}}, {"term": {"file": "kernel.log"}}]}}}
 ```
@@ -142,15 +155,19 @@ GET ci-logs-*/_search
 ## Cluster setup
 
 The user needs, on `ci-*`, the index permissions `create_index` and `write`, plus the cluster
-permission `cluster_composite_ops` for bulk loading. Each run also installs the three index
-templates in `templates/`, which needs the cluster permission
-`indices:admin/index_template/put`. Without it, the script warns and loads with the templates
-already in place. An admin can install them once:
+permission `cluster_composite_ops` for bulk loading. Each run also installs the templates in
+`templates/`, which needs the cluster permissions `cluster:admin/component_template/put` and
+`indices:admin/index_template/put`. A file without `index_patterns` is a component template, such
+as `ci-logs-common` with the fields every log index shares. Without the permissions, the script
+warns and loads with the templates already in place. An admin can install them once, components
+first:
 
 ```bash
-for t in ci-metrics ci-logs ci-meta; do
+cd .github/actions/ingest/templates
+for f in ci-logs-common.json $(ls | grep -vx ci-logs-common.json); do
+  case $f in ci-logs-common.json) kind=_component_template ;; *) kind=_index_template ;; esac
   curl -u admin --cacert ca.pem -X PUT -H 'Content-Type: application/json' \
-    "https://opensearch.example.com:9200/_index_template/$t" -d @".github/actions/ingest/templates/$t.json"
+    "https://opensearch.example.com:9200/$kind/${f%.json}" -d @"$f"
 done
 ```
 

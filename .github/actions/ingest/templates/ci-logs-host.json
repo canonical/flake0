@@ -1,0 +1,8 @@
+{
+  "index_patterns": [
+    "ci-logs-host-*"
+  ],
+  "composed_of": [
+    "ci-logs-common"
+  ]
+}

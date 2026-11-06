@@ -1,7 +1,4 @@
 {
-  "index_patterns": [
-    "ci-logs-*"
-  ],
   "template": {
     "mappings": {
       "dynamic": false,

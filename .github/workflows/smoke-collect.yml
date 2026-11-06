@@ -327,8 +327,8 @@ jobs:
           # every number is a double, though Go writes a whole float like usage_steal 0.0 as 0
           os '/ci-metrics-*/_mapping/field/cpu.usage_steal' | jq -e '[.[].mappings[].mapping.usage_steal.type] | length > 0 and all(. == "double")'
 
-          # the AppArmor line written to /dev/kmsg above
-          os '/ci-logs-*/_count' -d '{"query": {"bool": {"filter": [
+          # the AppArmor line written to /dev/kmsg above, in the host logs' index
+          os '/ci-logs-host-*/_count' -d '{"query": {"bool": {"filter": [
             {"match_phrase": {"message": "apparmor DENIED"}}, {"match_phrase": {"message": "flake0-smoke"}}]}}}' \
             | jq -e '.count >= 1'
 
