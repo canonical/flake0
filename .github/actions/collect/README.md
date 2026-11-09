@@ -77,8 +77,8 @@ Collected: `cpu` (per-core, incl. `usage_steal`), `mem`, `swap`, `pressure` (PSI
 stall time, the highest-signal metric here), `disk` (bytes **and inodes**), `diskio`, `net`,
 `netstat`, `nstat`, `processes`, `kernel`, `linux_sysctl_fs`, `conntrack` (when the module is
 loaded), and `procstat` for jujud, containerd, dockerd, lxd, snapd, kubelet, pebble, mongod,
-pytest, Telegraf itself, and the log watchers with their `juju`, `lxc` and `tail` processes and
-the `journalctl` they start inside LXD containers.
+pytest, Telegraf itself, and the log watchers with their `juju`, `lxc`, `tail` and `dmesg` processes,
+the `journalctl` that follows snapd, and the `journalctl` they start inside LXD containers.
 
 Every metric carries `run_id`, `run_attempt`, `repo`, `workflow`, `job`, `sha`, `ref`,
 `runner_name`, `runner_os` and `image_os`, so you can pull up one run or diff a good run against
