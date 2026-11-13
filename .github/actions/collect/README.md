@@ -37,8 +37,10 @@ exits 0.
 | `artifact-name` | `flake0-collect-<run_id>-<attempt>-<job>` | Name of the uploaded artifact. Set it in a matrix, because the default repeats across legs and `upload-artifact@v4` rejects duplicates. `stop` reuses the name given at `start`. |
 | `retention-days` | `14` | Artifact retention |
 | `collect-dir` | `$RUNNER_TEMP/flake0-collect` | Collection directory |
-| `logs` | `true` | Follow Juju and workload logs. `false` collects host metrics only. |
+| `logs` | `true` | Follow Juju, workload, kernel and snapd logs. `false` skips them. `pytest.log` comes only from `test-log`, and test markers only from `markers`. |
 | `redact-values` | `""` | Path to a file of secret values (one per line) to mask in collected logs before bundling. See [Workload logs](#workload-logs). |
+| `markers` | `false` | `start` only. Load the test markers pytest plugin in later steps. See [Test output and markers](#test-output-and-markers). |
+| `test-log` | `""` | `stop` only. Path to the job's test output, copied into the bundle as `pytest.log`. See [Test output and markers](#test-output-and-markers). |
 | `cache-telegraf` | `true` | Cache the binary between jobs, avoiding an ~82 MB download per run |
 
 ## Outputs
@@ -64,13 +66,19 @@ A `tar.zst` artifact containing:
 | `workload/lxd/<container>/journal.log` | LXD container journal, when LXD is used |
 | `workload/lxd/<container>/<snap>_<dir>_<file>` | Snap log files under `/var/snap/<snap>/common/var/log/<dir>/` in LXD containers |
 | `workload-watcher.log` | Workload watcher diagnostics, when something was followed |
+| `kernel.log` | New kernel messages: OOM kills, AppArmor denials, I/O errors. Needs root or passwordless `sudo` |
+| `snapd.log` | New lines of snapd's journal. Needs root or passwordless `sudo` |
+| `host-watcher.log` | Errors from the two followers above, usually empty |
+| `env-start.json`, `env-end.json` | Kernel version, snaps and snapd changes at `start` and `stop` |
+| `pytest.log` | The file named by `test-log`, when set |
+| `markers.ndjson` | One start and one finish line per test, with `markers: true` |
 
 Collected: `cpu` (per-core, incl. `usage_steal`), `mem`, `swap`, `pressure` (PSI — cpu/mem/io
 stall time, the highest-signal metric here), `disk` (bytes **and inodes**), `diskio`, `net`,
 `netstat`, `nstat`, `processes`, `kernel`, `linux_sysctl_fs`, `conntrack` (when the module is
 loaded), and `procstat` for jujud, containerd, dockerd, lxd, snapd, kubelet, pebble, mongod,
-pytest, Telegraf itself, and the log watchers with their `juju`, `lxc` and `tail` processes and
-the `journalctl` they start inside LXD containers.
+pytest, Telegraf itself, and the log watchers with their `juju`, `lxc`, `tail` and `dmesg` processes,
+the `journalctl` that follows snapd, and the `journalctl` they start inside LXD containers.
 
 Every metric carries `run_id`, `run_attempt`, `repo`, `workflow`, `job`, `sha`, `ref`,
 `runner_name`, `runner_os` and `image_os`, so you can pull up one run or diff a good run against
@@ -113,22 +121,35 @@ container exists, so it never installs or wakes LXD. Each file starts with
 top, after a new marker.
 
 Pod output and container journals land in the artifact, so anything a workload prints could become
-readable by anyone who can read the repo. Before bundling, `stop` masks secrets in the collected
-Juju and workload logs (see [Redaction](#redaction)), but this is best-effort — set `logs: false` to
-collect host metrics only when logs may carry sensitive data you cannot enumerate.
+readable by anyone who can read the repo. Before bundling, `stop` masks secrets in every collected
+log (see [Redaction](#redaction)), but this is best-effort. When logs may carry sensitive data you
+cannot enumerate, set `logs: false` and leave `test-log` and `markers` unset.
 
 #### Redaction
 
-The `stop` phase rewrites the collected logs in place before they are bundled, masking:
+The `stop` phase rewrites every `*.log` file and everything under `workload/` in place before they
+are bundled, masking:
 
 - every value listed in the `redact-values` file (one per line) — the reliable layer; point it at the
   job's known credentials, e.g. values you would otherwise pass to `add-mask`.
-- common secret formats (`password=`, `token:`, auth schemes, JWTs, AWS keys, PEM private-key blocks)
-  via `scripts/redact.sed` — best-effort, so it will miss custom, encoded or split secrets.
+- common secret formats (`password=`, `token:`, auth schemes, URL credentials, JWTs, AWS keys, PEM
+  private-key blocks) via `scripts/redact.sed` — best-effort, so it will miss custom, encoded or split secrets.
+  A private-key block with no END line masks the rest of that file.
 
 Logs are unredacted on the runner's disk while the job runs and only masked at `stop`, so treat the
 runner as trusted; the exposure this closes is the shared artifact. The Juju `*-status.ndjson` files
 are left untouched to keep them valid JSON.
+
+`markers.ndjson` is masked too. pytest puts parameter values in test ids, so
+`test_login[password=hunter2]` lands in the file. Masking only catches the formats above and your
+`redact-values`, so `test_login[hunter2]` stays readable unless `hunter2` is listed. A listed value
+with a quote, a backslash or a non-ASCII character does not match either, because pytest and JSON
+escape it in the id. Don't parametrize tests with secrets, or give those parameters an `ids=` value.
+
+> [!WARNING]
+> The `env-*.json` snapshots are not redacted, and `logs: false` does not turn them off. `changes`
+> includes the `err` of a failed snapd change and the `log` of its tasks, which can hold snap hook
+> output. Anyone who can read the artifact can read those fields.
 
 #### Memory footprint
 
@@ -145,6 +166,91 @@ measured by procstat on the K8s legs of `consumer-sim`, which followed 31 files,
 Each LXD container adds an `lxc exec` client of about 22 MB RSS for its journal. An LXD run follows
 2 or 3 containers and a few snap log files. Every run reports these numbers in `metrics.json`,
 because procstat watches the watchers and their followers.
+
+### Kernel, snapd and environment
+
+With root or passwordless `sudo`, the action follows `dmesg -W` into `kernel.log` and
+`journalctl -u snapd -f` into `snapd.log`. Both start at `start` and hold only new lines. The kernel
+log is not filtered, because an OOM report spans many lines.
+
+`env-start.json` and `env-end.json` come from snapd's REST API and need no root:
+
+```json
+{"ts": "2026-11-06T10:00:00.123Z", "kernel": "6.8.0-1020-azure", "snaps": [...], "changes": [...]}
+```
+
+`changes` lists snapd's recent changes with their times, about the last day, so a refresh just
+before the job shows up in `env-start.json`. Compare the `revision` of each snap in the two files to catch a refresh mid-run.
+`snaps` and `changes` are `null` without snapd. These files are not redacted, see
+[Redaction](#redaction).
+
+### Test output and markers
+
+`stop` copies the file named by `test-log` into the bundle as `pytest.log` and redacts it. Use
+`shell: bash`, which sets `pipefail`, so `tee` keeps the test exit code:
+
+```yaml
+- shell: bash
+  run: pytest tests/integration 2>&1 | tee "$RUNNER_TEMP/test.log"
+
+- uses: canonical/flake0/.github/actions/collect@main
+  if: always()
+  with:
+    phase: stop
+    test-log: ${{ runner.temp }}/test.log
+```
+
+`markers.ndjson` records when each test started and finished, so you can match log lines to a test:
+
+```json
+{"ts":"2026-11-06T10:00:00.123Z","event":"start","nodeid":"tests/integration/test_x.py::test_y"}
+{"ts":"2026-11-06T10:00:12.456Z","event":"finish","nodeid":"tests/integration/test_x.py::test_y","outcome":"failed","duration":12.3}
+```
+
+`outcome` is `passed`, `skipped`, `failed`, or `error` when setup or teardown failed. An attempt that
+`pytest-rerunfailures` retries counts as failed, and each attempt gets its own pair of lines.
+`pytest-retry` retries inside one pair, so a test that passes on retry still shows `failed`.
+
+Turn it on at `start`:
+
+```yaml
+- uses: canonical/flake0/.github/actions/collect@main
+  with:
+    phase: start
+    markers: true
+```
+
+`start` then writes `FLAKE0_MARKERS`, `PYTEST_PLUGINS` and `PYTHONPATH` to `$GITHUB_ENV`, adding to
+any `PYTEST_PLUGINS` or `PYTHONPATH` set before it. A pytest in a later step needs nothing else. A
+step that sets its own `PYTHONPATH` must keep the existing value, because pytest stops at startup if
+it cannot import the plugin.
+
+Spread and tox drop the environment, so a charm repo forwards it through both:
+
+```yaml
+# spread.yaml, github-ci backend
+environment:
+  FLAKE0_MARKERS: "$(HOST: echo $FLAKE0_MARKERS)"
+  PYTEST_PLUGINS: "$(HOST: echo $PYTEST_PLUGINS)"
+  PYTHONPATH: "$(HOST: echo $PYTHONPATH)"
+```
+
+```ini
+# tox.ini
+[testenv]
+set_env =
+    # add :{env:PYTHONPATH:} to the existing line
+    PYTHONPATH = {[vars]src_path}:{tox_root}/lib:{env:PYTHONPATH:}
+
+[testenv:integration]
+pass_env =
+    FLAKE0_MARKERS
+    PYTEST_PLUGINS
+```
+
+Make all of these changes together. `set_env` overrides `pass_env`, so `PYTHONPATH` has to be merged
+there, and `PYTEST_PLUGINS` without the plugin on `PYTHONPATH` makes pytest fail at startup, before any
+test runs.
 
 ### Reading a bundle
 
@@ -201,10 +307,11 @@ and the action warns when it happens. Prefer the default.
 
 ### Root
 
-Telegraf and the workload log watcher are launched under `sudo` when passwordless `sudo` is
-available. Telegraf needs it for a handful of root-only `/proc` reads, and every workload log is
-root-only. Without it, Telegraf runs unprivileged with those few metrics missing, the Juju watcher
-sees only the runner user's client store, and no workload logs are collected.
+Telegraf and the workload and host log watchers are launched under `sudo` when passwordless `sudo`
+is available. Telegraf needs it for a handful of root-only `/proc` reads, and every workload log,
+the kernel log and snapd's journal are root-only. Without it, Telegraf runs unprivileged with those
+few metrics missing, the Juju watcher sees only the runner user's client store, and no workload
+logs, `kernel.log` or `snapd.log` are collected.
 
 ## Development
 

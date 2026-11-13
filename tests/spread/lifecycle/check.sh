@@ -25,6 +25,13 @@ done
 [ ! -e "$STATUS-controller.ndjson" ] || fail "the controller model got status"
 if compgen -G "$B/juju-*-user-*" > /dev/null; then fail "the runner user's store should be empty"; fi
 
+for f in kernel.log snapd.log env-start.json env-end.json; do
+  [ -e "$B/$f" ] || fail "missing $f"
+done
+jq -es 'map(select(.nodeid | endswith("marker_probe.py::test_probe")))
+  | map(.event) == ["start", "finish"] and .[1].outcome == "passed"' \
+  "$B/markers.ndjson" > /dev/null || fail "no markers from pytest inside spread"
+
 W="$B/workload"
 if [ "$CTL" = concierge-lxd ]; then
   grep -qF "$TOKEN" "$W"/lxd/*/journal.log || fail "token missing from the LXD journals"

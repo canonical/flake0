@@ -37,6 +37,7 @@ jobs:
         uses: ./.github/actions/collect
         with:
           phase: start
+          markers: true
           artifact-name: flake0-sim-${{ matrix.consumer }}-${{ matrix.substrate }}-${{ matrix.runner }}
 
       # valkey's step. OpenSearch's IS runners ship no Docker, so its jobs need
@@ -105,7 +106,7 @@ jobs:
       - name: Assert the watchers were stopped
         if: ${{ !cancelled() }}
         run: |
-          if pgrep -af 'juju-watch[.]sh|debug-log (--replay )?--tail --date --utc --ms -m |workload-watch[.]sh|tail -n [+]1 -F|journalctl --utc --no-tail -f'; then
+          if pgrep -af 'juju-watch[.]sh|debug-log (--replay )?--tail --date --utc --ms -m |workload-watch[.]sh|tail -n [+]1 -F|journalctl --utc --no-tail -f|host-watch[.]sh|dmesg -W|journalctl -u snapd'; then
             echo "::error::a log watcher or follower is still running after stop"
             exit 1
           fi

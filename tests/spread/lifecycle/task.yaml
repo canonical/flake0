@@ -8,6 +8,11 @@ prepare: |
   "$SPREAD_PATH/tests/spread/prepare-$CONSUMER.sh"
 execute: |
   set -euo pipefail
+  # pytest as root inside spread, like the consumers. check.sh looks for its markers.
+  apt-get update -qq
+  apt-get install -y -qq python3-pytest
+  python3 -m pytest "$SPREAD_PATH/tests/spread/lifecycle/marker_probe.py"
+
   CTL="concierge-$SUBSTRATE"
   # flake0's followers are the only processes whose command line ends like this
   follower() { printf 'debug-log (--replay )?--tail --date --utc --ms -m %s$' "$1"; }
