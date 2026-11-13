@@ -1,0 +1,21 @@
+{
+ "job": "integration | amd64",
+ "job_id": "201",
+ "model": "z-ai/glm-5.3",
+ "verdict": "REAL_FAILURE",
+ "root_cause": "code_regression",
+ "confidence_pct": 85,
+ "failed_tests": [
+  "test_relation_joined",
+  "test_scale_up"
+ ],
+ "summary": "The PR broke the relation hook, ping @someone in #12.",
+ "suggested_fix": "Restore the `peer` relation check in charm.py",
+ "reasoning": "Reasoning for integration | amd64.",
+ "evidence": [
+  "Evidence one for integration | amd64",
+  "Evidence two"
+ ],
+ "recommendation": "block_merge",
+ "confidence_bucket": "high"
+}

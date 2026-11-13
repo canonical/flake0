@@ -1,0 +1,5 @@
+{
+ "job": "setup (lxd)",
+ "job_id": "302",
+ "error": "classify.py exited 1"
+}
