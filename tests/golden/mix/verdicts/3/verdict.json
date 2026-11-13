@@ -1,0 +1,20 @@
+{
+ "job": "integration (microceph)",
+ "job_id": "abc",
+ "model": "z-ai/glm-5.3",
+ "verdict": "INCONCLUSIVE",
+ "root_cause": "unknown",
+ "confidence_pct": 30,
+ "failed_tests": [
+  "test_x"
+ ],
+ "summary": "",
+ "suggested_fix": "",
+ "reasoning": "Reasoning for integration (microceph).",
+ "evidence": [
+  "Evidence one for integration (microceph)",
+  "Evidence two"
+ ],
+ "recommendation": "needs_human_review",
+ "confidence_bucket": "low"
+}

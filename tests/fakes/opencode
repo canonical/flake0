@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""Fake opencode CLI for tests/test_classify.py.
+
+run.sh starts it with env -i in the work dir, so it takes its orders from the
+bundle: it copies bundle/fake-verdict to verdict.json when that exists,
+prints bundle/fake-message as the agent's text, sleeps when bundle/fake-sleep
+exists, and prints an error event and exits 1
+when bundle/fake-error exists. With bundle/fake-session it prints a session
+ID, and a --session call writes bundle/fake-follow-up-verdict instead. It records its argv, environment and the
+work dir's files in fake-*.json next to the bundle.
+"""
+
+import json
+import os
+import pathlib
+import shutil
+import sys
+import time
+
+work = pathlib.Path.cwd()
+if (work / "bundle/fake-session").exists():
+    print(json.dumps({"type": "step_start", "sessionID": "ses_fake"}))
+    if "--session" in sys.argv:
+        (work / "fake-follow-up-argv.json").write_text(json.dumps(sys.argv[1:]))
+        shutil.copy(work / "bundle/fake-follow-up-verdict", work / "verdict.json")
+        sys.exit(0)
+(work / "fake-argv.json").write_text(json.dumps(sys.argv[1:]))
+(work / "fake-env.json").write_text(json.dumps(dict(os.environ)))
+files = sorted(str(p.relative_to(work)) for p in work.rglob("*") if not p.name.startswith("fake-"))
+(work / "fake-files.json").write_text(json.dumps(files))
+if (work / "bundle/fake-message").exists():
+    print(json.dumps({"type": "text", "part": {"text": (work / "bundle/fake-message").read_text()}}))
+if (work / "bundle/fake-sleep").exists():
+    time.sleep(30)
+if (work / "bundle/fake-verdict").exists():
+    shutil.copy(work / "bundle/fake-verdict", work / "verdict.json")
+if (work / "bundle/fake-error").exists():
+    print(json.dumps({"type": "error", "error": {"type": "provider.no-route", "message": "Model unavailable"}}))
+    sys.exit(1)

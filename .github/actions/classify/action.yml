@@ -1,0 +1,70 @@
+name: classify
+description: >-
+  Runs an opencode agent, through OpenRouter, over this job's collect bundle and
+  source to tell whether it failed from flakiness or a real bug. Add it as the
+  last step of the test job. Part of the Flake0 AI debugging suite.
+author: canonical
+branding:
+  icon: help-circle
+  color: orange
+
+inputs:
+  openrouter-api-key:
+    description: "OpenRouter API key. Empty (e.g. on fork pull requests) skips classification."
+    required: true
+  bundle-path:
+    description: "The collect stop phase's bundle-path output"
+    required: false
+    default: ""
+  job-name:
+    description: "Job name in the prompt and the summary"
+    required: false
+    default: ${{ github.job }}
+  model:
+    description: "OpenRouter model slug"
+    required: false
+    default: "deepseek/deepseek-v4.1-flash"
+  github-token:
+    description: "Read-only token for run history and the pull request diff"
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  verdict-path:
+    description: "Path to verdict.json, empty if classification was skipped"
+    value: ${{ steps.run.outputs.verdict-path }}
+
+runs:
+  using: composite
+  steps:
+    # The tarball, not the binary: its SHA256 is checked on every run, so a
+    # cache entry written by another branch can't swap it.
+    - name: Restore cached opencode
+      if: ${{ inputs.openrouter-api-key != '' }}
+      continue-on-error: true
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ${{ runner.temp }}/flake0-opencode-tarball
+        key: flake0-opencode-2.2.7-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Install opencode
+      id: install
+      if: ${{ inputs.openrouter-api-key != '' }}
+      continue-on-error: true
+      shell: bash
+      env:
+        TARBALL_DIR: ${{ runner.temp }}/flake0-opencode-tarball
+      run: "$GITHUB_ACTION_PATH/scripts/install.sh"
+
+    - name: Classify failure
+      id: run
+      shell: bash
+      env:
+        OPENROUTER_API_KEY: ${{ inputs.openrouter-api-key }}
+        OPENCODE_BIN: ${{ steps.install.outputs.bin }}
+        MODEL: ${{ inputs.model }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        BUNDLE_PATH: ${{ inputs.bundle-path }}
+        JOB_NAME: ${{ inputs.job-name }}
+      run: "$GITHUB_ACTION_PATH/scripts/run.sh"

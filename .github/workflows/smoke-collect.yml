@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: shellcheck
-        run: shellcheck -S style .github/actions/collect/scripts/*.sh .github/actions/plot/scripts/*.sh tests/spread/*.sh tests/spread/lifecycle/check.sh tests/fakes/sudo tests/fakes/telegraf
+        run: shellcheck -S style .github/actions/collect/scripts/*.sh .github/actions/plot/scripts/*.sh .github/actions/classify/scripts/*.sh .github/actions/summarize/scripts/*.sh tests/spread/*.sh tests/spread/lifecycle/check.sh tests/fakes/sudo tests/fakes/telegraf
 
       # Pinned for version-determinism with the plot action's own runtime
       # interpreter -- not because Ubuntu 24.04's system Python is PEP
@@ -32,7 +32,7 @@ jobs:
           pip install ruff==0.16.7 pytest==9.1.1 -r .github/actions/plot/scripts/requirements.txt
 
       - name: ruff
-        run: ruff check .github/actions/plot/scripts/plot_telemetry.py tests/test_juju_watch.py tests/test_workload_watch.py tests/test_redact.py tests/test_markers.py tests/test_env_snapshot.py tests/test_start_stop.py .github/actions/collect/pytest/flake0_markers.py tests/fakes/lxc
+        run: ruff check .github/actions/plot/scripts/plot_telemetry.py tests/test_juju_watch.py tests/test_workload_watch.py tests/test_redact.py tests/test_markers.py tests/test_env_snapshot.py tests/test_start_stop.py .github/actions/collect/pytest/flake0_markers.py tests/fakes/lxc .github/actions/summarize/scripts/summarize.py .github/actions/classify/scripts/final_verdict.py tests/test_classify.py tests/test_summarize.py tests/fakes/opencode tests/demo/units
 
       - name: pytest
         run: python3 -m pytest tests/
@@ -317,3 +317,70 @@ jobs:
                    and .tags.ref         == "back\\slash"
                    and .tags.runner_name == "dollar $HOME ${NOPE}"))' "$M"
           echo "all hostile tag values preserved"
+
+  classify:
+    # A test that fails by design (tests/demo/units: a wrong expected value),
+    # to check that classify runs opencode end to end and writes a verdict.
+    # The model's answer varies, so only the verdict's shape is checked.
+    name: demo (units)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read # run history for the agent
+      pull-requests: write # the diff for the agent, and summarize's PR comment
+    # Job level: a step's own env is not available to its `if`.
+    env:
+      HAS_KEY: ${{ secrets.OPENROUTER_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Start collection
+        uses: ./.github/actions/collect
+        with:
+          phase: start
+
+      # continue-on-error, not `|| true`, so the step fails like a real one and
+      # the job stays green. `shell: bash` adds pipefail.
+      - name: Run the checks
+        id: test
+        continue-on-error: true
+        shell: bash
+        run: python3 -m unittest discover -s tests/demo/units -p 'check_*.py' -v 2>&1 | tee "$RUNNER_TEMP/test.log"
+
+      - name: Stop collection
+        id: stop
+        if: always()
+        uses: ./.github/actions/collect
+        with:
+          phase: stop
+          test-log: ${{ runner.temp }}/test.log
+
+      # The job passes, so `failure()` is false. Check the step's outcome instead.
+      - name: Classify
+        id: classify
+        if: ${{ steps.test.outcome == 'failure' }}
+        timeout-minutes: 25
+        uses: ./.github/actions/classify
+        with:
+          openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+          bundle-path: ${{ steps.stop.outputs.bundle-path }}
+          job-name: demo (units)
+
+      - name: Assert classify wrote a verdict
+        if: ${{ steps.test.outcome == 'failure' && env.HAS_KEY == 'true' }}
+        env:
+          VERDICT: ${{ steps.classify.outputs.verdict-path }}
+        run: |
+          set -euxo pipefail
+          jq . "$VERDICT"
+          jq -e 'has("error") | not' "$VERDICT"
+          jq -e '.verdict | IN("REAL_FAILURE", "FLAKY", "INCONCLUSIVE")' "$VERDICT"
+
+      - name: Update PR comment
+        if: ${{ steps.test.outcome == 'failure' && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
+        uses: ./.github/actions/summarize
+        with:
+          leg-id: demo-units
+          job-name: demo (units)
+          verdict-path: ${{ steps.classify.outputs.verdict-path }}
+          job-id: ${{ job.check_run_id }}

@@ -1,0 +1,20 @@
+{
+ "job": "integration (lxd)",
+ "job_id": "111",
+ "model": "z-ai/glm-5.3",
+ "verdict": "FLAKY",
+ "root_cause": "environment_infra",
+ "confidence_pct": 80,
+ "failed_tests": [
+  "test_cache_warmup"
+ ],
+ "summary": "PSI io peaked at 74%.",
+ "suggested_fix": "",
+ "reasoning": "Reasoning for integration (lxd).",
+ "evidence": [
+  "Evidence one for integration (lxd)",
+  "Evidence two"
+ ],
+ "recommendation": "retry_safe",
+ "confidence_bucket": "high"
+}

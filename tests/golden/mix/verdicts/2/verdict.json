@@ -1,0 +1,18 @@
+{
+ "job": "integration (k8s)",
+ "job_id": "203",
+ "model": "z-ai/glm-5.3",
+ "verdict": "FLAKY",
+ "root_cause": "external_service",
+ "confidence_pct": 60,
+ "failed_tests": [],
+ "summary": "Charmhub returned 503 during setup.",
+ "suggested_fix": "",
+ "reasoning": "Reasoning for integration (k8s).",
+ "evidence": [
+  "Evidence one for integration (k8s)",
+  "Evidence two"
+ ],
+ "recommendation": "needs_human_review",
+ "confidence_bucket": "medium"
+}
