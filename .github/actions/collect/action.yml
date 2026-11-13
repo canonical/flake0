@@ -43,7 +43,7 @@ inputs:
     default: ""
   logs:
     description: >-
-      Follow Juju, workload, kernel and snapd logs. 'false' skips them.
+      Follow Juju, workload, kernel and snapd logs and the job log. 'false' skips them.
       pytest.log comes only from test-log, and test markers only from markers.
     required: false
     default: "true"

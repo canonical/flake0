@@ -78,6 +78,7 @@ jobs:
               assert False, "intentional failure for collect smoke"
           EOF
           echo flake0-smoke-kmsg | sudo tee /dev/kmsg > /dev/null
+          echo flake0-smoke-joblog
           sudo snap install hello-world
           # >90s of collection so the 30s-tier inputs (procstat, processes) yield
           # several samples — the overhead assertions below need a delta.
@@ -129,6 +130,8 @@ jobs:
 
           # host logs, snapshots, test output and markers
           test -s /tmp/bundle/pytest.log
+          grep -q 'Current runner version' /tmp/bundle/job.log
+          grep -q flake0-smoke-joblog /tmp/bundle/job.log
           grep -q flake0-smoke-kmsg /tmp/bundle/kernel.log
           grep -q 'snap "hello-world"' /tmp/bundle/snapd.log
           jq -e 'any(.snaps[]; .name == "hello-world")' /tmp/bundle/env-end.json
@@ -253,6 +256,11 @@ jobs:
             exit 1
           fi
           echo "no host log watcher remains"
+          if pgrep -af 'joblog-watch[.]sh' ; then
+            echo "::error::job log watcher still running after stop"
+            exit 1
+          fi
+          echo "no job log watcher remains"
 
       - name: Report bundle volume
         run: |

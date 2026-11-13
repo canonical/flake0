@@ -217,6 +217,16 @@ launch_watcher() {
 }
 if [ "${FLAKE0_LOGS:-true}" = true ]; then
   launch_watcher setsid -f "$ACTION_DIR/scripts/juju-watch.sh"
+  # The runner's dir is two levels above the Runner.Worker that runs this step.
+  # The watcher cannot look for it once setsid has detached it, hence the env.
+  WORKER=$$
+  while [ "$WORKER" -gt 1 ] && [ "$(cat "/proc/$WORKER/comm" 2> /dev/null)" != Runner.Worker ]; do
+    WORKER="$(awk '/^PPid:/ {print $2}' "/proc/$WORKER/status" 2> /dev/null || echo 1)"
+  done
+  if [ "$WORKER" -gt 1 ]; then
+    DIAG="$(dirname "$(dirname "$(readlink "/proc/$WORKER/exe")")")/_diag"
+    launch_watcher setsid -f env "FLAKE0_RUNNER_DIAG=$DIAG" "$ACTION_DIR/scripts/joblog-watch.sh"
+  fi
   if [ ${#SUDO[@]} -gt 0 ] || [ "$(id -u)" = 0 ]; then
     launch_watcher "${SUDO[@]}" setsid -f "$ACTION_DIR/scripts/workload-watch.sh"
     launch_watcher "${SUDO[@]}" setsid -f "$ACTION_DIR/scripts/host-watch.sh"

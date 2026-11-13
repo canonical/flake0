@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# flake0-collect: stop the Juju, workload and host log watchers and everything
+# flake0-collect: stop the Juju, workload, host and job log watchers and everything
 # they started. stop.sh calls it before bundling. It never fails and never prints.
 set -uo pipefail
 
@@ -22,7 +22,8 @@ tree() {
 
 # Collect every tree first, because children are reparented once their parent dies.
 PIDS=()
-for watcher in watcher:juju-watch.sh workload-watcher:workload-watch.sh host-watcher:host-watch.sh; do
+for watcher in watcher:juju-watch.sh workload-watcher:workload-watch.sh host-watcher:host-watch.sh \
+  joblog-watcher:joblog-watch.sh; do
   PID="$(cat "$DIR/${watcher%%:*}.pid" 2> /dev/null)" || continue
   rm -f "$DIR/${watcher%%:*}.pid"
   # a stale pid may belong to another process by now
