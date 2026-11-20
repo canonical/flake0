@@ -50,7 +50,7 @@ runs:
 
     - name: Upload dashboard
       if: ${{ always() && inputs.artifact-name != '' && steps.run.outputs.health-png != '' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ inputs.artifact-name }}
         path: ${{ steps.run.outputs.health-png }}

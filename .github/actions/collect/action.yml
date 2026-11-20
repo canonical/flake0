@@ -121,7 +121,7 @@ runs:
 
     - name: Restore cached Telegraf
       if: ${{ inputs.phase == 'start' && inputs.cache-telegraf == 'true' }}
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ${{ runner.temp }}/flake0-telegraf
         key: flake0-telegraf-${{ inputs.telegraf-version }}-${{ runner.os }}-${{ runner.arch }}
@@ -153,7 +153,7 @@ runs:
     # extension changes when zstd is unavailable.
     - name: Upload collect bundle
       if: ${{ always() && inputs.phase == 'stop' && steps.stop.outputs.bundle-path != '' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ steps.resolve.outputs.artifact-name }}
         path: ${{ steps.stop.outputs.bundle-path }}

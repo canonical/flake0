@@ -23,17 +23,15 @@ with open(sys.argv[1], encoding="utf-8", errors="replace") as fh:
 
 decoder = json.JSONDecoder()
 for text in reversed(texts):
-    found = None
-    for i, char in enumerate(text):
-        if char != "{":
+    # From the end, so the first match is the message's last verdict
+    for i in reversed(range(len(text))):
+        if text[i] != "{":
             continue
         try:
             value, _ = decoder.raw_decode(text, i)
         except (ValueError, RecursionError):
             continue
         if isinstance(value, dict) and "verdict" in value:
-            found = value
-    if found is not None:
-        print(json.dumps(found))
-        sys.exit(0)
+            print(json.dumps(value))
+            sys.exit(0)
 sys.exit(1)
