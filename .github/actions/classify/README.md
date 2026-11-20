@@ -59,7 +59,7 @@ repository that uses the key.
 
 | Input | Default | Description |
 |---|---|---|
-| `openrouter-api-key` | *(required)* | OpenRouter API key. Empty skips classification. |
+| `openrouter-api-key` | *(required)* | OpenRouter API key, usually `secrets.OPENROUTER_API_KEY`. Fork pull requests get it as an empty string, which skips classification. |
 | `bundle-path` | `""` | The `collect` stop phase's `bundle-path` output |
 | `job-name` | `github.job` | Job name in the prompt and the summary |
 | `model` | `deepseek/deepseek-v4.1-flash` | OpenRouter model slug |
@@ -118,7 +118,7 @@ environment and `PATH`. The action:
 - runs `git archive` without the secrets in its environment, since `.git/config` can run filters
 - runs opencode under `env -i` with `OPENCODE_DISABLE_PROJECT_CONFIG=1`, its own config and an
   empty `HOME`, so no `opencode.json`, `.opencode/` or `AGENTS.md` that PR code wrote is loaded
-- installs a pinned opencode with a checked SHA256 and calls it by path
+- installs opencode from the snap store (`2/stable`) and calls it by path
 - denies every tool but read, glob, grep, skill, `gh` reads and writing `verdict.json`.
   `external_directory` keeps the read tools inside the directory.
 
