@@ -43,7 +43,8 @@ steps:
     uses: canonical/flake0/.github/actions/classify@main
     with: # ...
   - name: Update flake0 PR comment
-    if: ${{ failure() && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
+    # Same failures as classify: a job that failed elsewhere, its tests green, gets no row
+    if: ${{ failure() && steps.classify.outcome != 'skipped' && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
     uses: canonical/flake0/.github/actions/summarize@main
     with:
       leg-id: ${{ matrix.name }}  # unique per matrix entry
@@ -52,7 +53,7 @@ steps:
       job-id: ${{ job.check_run_id }}  # links each test to this job's summary
 ```
 
-A failed job whose classify step was skipped or failed shows up under "No verdict". A job that
+A failed job whose classify step failed or timed out shows up under "No verdict". A job that
 fails before this step, or whose runner is lost, doesn't show up at all. Green runs, other
 events and fork pull requests (no secrets, so no verdicts) get no comment. A re-run attempt gets
 its own comment. The action never fails the job.

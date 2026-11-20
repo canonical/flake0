@@ -85,6 +85,7 @@ OpenSearch.
 | `REAL_FAILURE` × `code_preexisting` | Known/existing bug, not this PR's fault. | `open_issue` (don't block this PR) |
 | `REAL_FAILURE` × `test_defect` | The test itself is broken. | `fix_test` (don't block on product code) |
 | `FLAKY` × `code_regression` | Race condition introduced by this PR — still a real bug, just intermittent. | `block_merge` (do **not** auto-quarantine) |
+| `FLAKY` × `test_defect` | Race or timing assumption in the test itself. | `fix_test` |
 | `FLAKY` × `code_preexisting` | Pre-existing race condition/bug that surfaces intermittently. | `open_issue`, consider `quarantine_test` |
 | `FLAKY` × `workload_defect` | The underlying managed application is flaky. | `open_issue` against workload; consider `quarantine_test` |
 | `FLAKY` × `environment_infra` | Classic infra flake. | `retry_safe`, no code action |
