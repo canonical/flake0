@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "enabled_providers": ["openrouter"],
+  "autoupdate": false,
+  "share": "disabled",
+  "snapshot": false,
+  "agent": {
+    "flaky-test-investigator": { "steps": 45 }
+  }
+}

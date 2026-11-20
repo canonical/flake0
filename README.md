@@ -43,6 +43,33 @@ dashboard PNG straight from a `collect` bundle, with zero configuration:
 
 See [`.github/actions/plot/README.md`](.github/actions/plot/README.md) for details.
 
+The `classify` action (`.github/actions/classify`) runs an [opencode](https://opencode.ai) agent
+over a failed job's `collect` bundle and source, and tells whether it failed from flakiness or a
+real bug. Add it as the last step of the test job:
+
+```yaml
+- name: Stop telemetry
+  id: collect
+  if: always()
+  uses: canonical/flake0/.github/actions/collect@main
+  with:
+    phase: stop
+    test-log: ${{ runner.temp }}/test.log
+- name: Classify failure
+  if: failure()
+  timeout-minutes: 25
+  uses: canonical/flake0/.github/actions/classify@main
+  with:
+    openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+    bundle-path: ${{ steps.collect.outputs.bundle-path }}
+```
+
+See [`.github/actions/classify/README.md`](.github/actions/classify/README.md) for details.
+
+The `summarize` action (`.github/actions/summarize`) posts the verdicts of all failed jobs of a run
+as one pull request comment, grouped into charm bugs, test issues and flakiness. See
+[`.github/actions/summarize/README.md`](.github/actions/summarize/README.md).
+
 ## Community and support
 
 Flake0 is an open-source project that welcomes community contributions, suggestions, fixes and constructive feedback.

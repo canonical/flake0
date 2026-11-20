@@ -34,7 +34,7 @@ exits 0.
 |---|---|---|
 | `phase` | *(required)* | `start` or `stop` |
 | `telegraf-version` | `1.39.2` | Telegraf to install. See [Version pinning](#version-pinning). |
-| `artifact-name` | `flake0-collect-<run_id>-<attempt>-<job>` | Name of the uploaded artifact. Set it in a matrix, because the default repeats across legs and `upload-artifact@v4` rejects duplicates. `stop` reuses the name given at `start`. |
+| `artifact-name` | `flake0-collect-<run_id>-<attempt>-<job>` | Name of the uploaded artifact. Set it in a matrix, because the default repeats across legs and `upload-artifact` rejects duplicates. `stop` reuses the name given at `start`. |
 | `retention-days` | `14` | Artifact retention |
 | `collect-dir` | `$RUNNER_TEMP/flake0-collect` | Collection directory |
 | `logs` | `true` | Follow Juju, workload, kernel and snapd logs and the job log. `false` skips them. `pytest.log` comes only from `test-log`, and test markers only from `markers`. |
