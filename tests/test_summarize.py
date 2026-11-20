@@ -35,3 +35,9 @@ def test_unknown_labels_never_reach_the_comment():
                                  "recommendation": "<img src=x>", "job_id": "1) [y](http://e"})
     assert (group["verdict"], group["root_cause"], group["recommendation"], group["job_id"]) == (
         "INCONCLUSIVE", "unknown", "needs_human_review", "")
+
+
+def test_node_ids_become_function_names_and_long_text_cuts_at_a_word():
+    group = summarize.job_group({"job": "j", "failed_tests": ["tests/a.py::test_x[lxd]"], "summary": "word " * 100})
+    assert group["failed_tests"] == ["test_x[lxd]"]
+    assert summarize.safe(group["summary"]).endswith("word…")
