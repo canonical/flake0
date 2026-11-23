@@ -88,10 +88,15 @@ When done, write verdict.json in the working directory, with only this JSON obje
 {\"verdict\": \"REAL_FAILURE\" | \"FLAKY\" | \"INCONCLUSIVE\",
  \"root_cause\": \"<root cause category>\", \"recommendation\": \"<recommendation>\",
  \"confidence_pct\": <0-100>, \"confidence_bucket\": \"high\" | \"medium\" | \"low\",
- \"failed_tests\": [\"<failed test function>\", ...],
+ \"failed_tests\": [\"<failed pytest function, e.g. test_deploy[lxd]>\", ...],
  \"summary\": \"<one sentence for a pull request comment>\",
  \"suggested_fix\": \"<one sentence, or empty>\", \"error_excerpt\": \"<the key error lines>\",
- \"reasoning\": \"<a short paragraph>\", \"evidence\": [\"<one signal and where it is>\", ...]}"
+ \"reasoning\": \"<a short paragraph>\", \"evidence\": [\"<one signal and where it is>\", ...]}
+
+failed_tests holds bare function names, without path or module, and is [] when no test ran
+(e.g. spread prepare failed). summary and suggested_fix are under 200 characters each: the
+comment cuts longer text. The comment already names the test and the pull request, so the
+summary gives only the cause."
 
 # env -i: PR code can set OPENCODE_* and XDG_* through $GITHUB_ENV.
 # OPENCODE_DISABLE_PROJECT_CONFIG: opencode.json, .opencode/ and AGENTS.md in

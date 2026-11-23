@@ -113,7 +113,7 @@ dismiss.
 - **Evidence**: the concrete signals behind the verdict and root cause (log excerpts, run
   history, metrics, diff analysis)
 - **Suggested fix**: a short, concrete pointer to how the root cause could be fixed (file or
-  function and the change in prose), or `none` when the recommendation is `retry_safe` or
+  function and the change in prose), or empty when the recommendation is `retry_safe` or
   `needs_human_review`. Follow the skill's rule on not weakening tests.
 
 Given a URL, return the report as text. Given the classify action's message, write it to the

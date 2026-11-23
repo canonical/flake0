@@ -68,7 +68,8 @@ def job_group(verdict):
         "verdict": known(verdict.get("verdict"), VERDICTS, "INCONCLUSIVE"),
         "root_cause": known(verdict.get("root_cause"), ROOT_CAUSES, "unknown"),
         "recommendation": known(verdict.get("recommendation"), RECOMMENDATIONS, "needs_human_review"),
-        "failed_tests": [str(t) for t in tests],
+        # The function name only: models sometimes give the pytest node id
+        "failed_tests": [str(t).rsplit("::", 1)[-1] for t in tests],
         "summary": str(verdict.get("summary") or "") or "no classify verdict",
         "suggested_fix": str(verdict.get("suggested_fix") or ""),
         "label": str(verdict["job"]),
@@ -88,9 +89,15 @@ def bucket(group):
     return ROOT_CAUSE_BUCKET.get(group["root_cause"], "none")
 
 
+def shorten(text, limit):
+    """One line of text, cut at a word past limit."""
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[:limit].rsplit(" ", 1)[0] + "…"
+
+
 def safe(text, limit=300):
     """One line of plain text: no HTML, links, images, mentions or issue references, no code span to break out of."""
-    text = " ".join(str(text).split())[:limit]
+    text = shorten(text, limit)
     # & first: entities like &commat; would render as the characters escaped below
     for raw, escaped in (("&", "&amp;"), ("<", "&lt;"), (">", "&gt;"), ("[", "\\["), ("]", "\\]"), ("`", "'"),
                          ("@", "@\u200b"), ("#", "#\u200b"), ("://", ":\u200b//"), ("www.", "www\u200b.")):
