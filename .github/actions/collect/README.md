@@ -34,7 +34,7 @@ exits 0.
 |---|---|---|
 | `phase` | *(required)* | `start` or `stop` |
 | `telegraf-version` | `1.39.2` | Telegraf to install. See [Version pinning](#version-pinning). |
-| `artifact-name` | `flake0-collect-<run_id>-<attempt>-<job>` | Name of the uploaded artifact. Set it in a matrix, because the default repeats across legs and `upload-artifact@v4` rejects duplicates. `stop` reuses the name given at `start`. |
+| `artifact-name` | `flake0-collect-<run_id>-<attempt>-<job>` | Name of the uploaded artifact. Set it in a matrix, because the default repeats across legs and `upload-artifact` rejects duplicates. `stop` reuses the name given at `start`. |
 | `retention-days` | `14` | Artifact retention |
 | `collect-dir` | `$RUNNER_TEMP/flake0-collect` | Collection directory |
 | `logs` | `true` | Follow Juju, workload, kernel and snapd logs and the job log. `false` skips them. `pytest.log` comes only from `test-log`, and test markers only from `markers`. |
@@ -78,8 +78,8 @@ Collected: `cpu` (per-core, incl. `usage_steal`), `mem`, `swap`, `pressure` (PSI
 stall time, the highest-signal metric here), `disk` (bytes **and inodes**), `diskio`, `net`,
 `netstat`, `nstat`, `processes`, `kernel`, `linux_sysctl_fs`, `conntrack` (when the module is
 loaded), and `procstat` for jujud, containerd, dockerd, lxd, snapd, kubelet, pebble, mongod,
-pytest, Telegraf itself, and the log watchers with their `juju`, `lxc` and `tail` processes and
-the `journalctl` they start inside LXD containers.
+pytest, Telegraf itself, and the log watchers with their `juju`, `lxc`, `tail` and `dmesg` processes,
+the `journalctl` that follows snapd, and the `journalctl` they start inside LXD containers.
 
 Every metric carries `run_id`, `run_attempt`, `repo`, `workflow`, `job`, `sha`, `ref`,
 `runner_name`, `runner_os` and `image_os`, so you can pull up one run or diff a good run against

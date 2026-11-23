@@ -1,0 +1,18 @@
+{
+ "job": "integration (lxd)",
+ "job_id": "301",
+ "model": "z-ai/glm-5.3",
+ "verdict": "INCONCLUSIVE",
+ "root_cause": "unknown",
+ "confidence_pct": 20,
+ "failed_tests": [],
+ "summary": "Not enough evidence.",
+ "suggested_fix": "",
+ "reasoning": "Reasoning for integration (lxd).",
+ "evidence": [
+  "Evidence one for integration (lxd)",
+  "Evidence two"
+ ],
+ "recommendation": "needs_human_review",
+ "confidence_bucket": "low"
+}

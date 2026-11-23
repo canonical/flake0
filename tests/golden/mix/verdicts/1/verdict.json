@@ -1,0 +1,20 @@
+{
+ "job": "integration | arm64",
+ "job_id": "202",
+ "model": "z-ai/glm-5.3",
+ "verdict": "REAL_FAILURE",
+ "root_cause": "test_defect",
+ "confidence_pct": 70,
+ "failed_tests": [
+  "test_build_and_deploy"
+ ],
+ "summary": "Empty charm URL <b>error</b> on arm64.",
+ "suggested_fix": "Build the charm first",
+ "reasoning": "Reasoning for integration | arm64.",
+ "evidence": [
+  "Evidence one for integration | arm64",
+  "Evidence two"
+ ],
+ "recommendation": "fix_test",
+ "confidence_bucket": "medium"
+}
