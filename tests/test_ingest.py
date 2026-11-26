@@ -457,7 +457,7 @@ def test_logs_split_by_source(tmp_path):
                        for rel, source in sources.items()}
 
 
-@pytest.mark.parametrize("status", [408, None])
+@pytest.mark.parametrize("status", [408, 504, None])
 def test_throttled_bulk_retried(tmp_path, monkeypatch, status):
     monkeypatch.setattr(ingest.time, "sleep", lambda _: None)
     fake = load(write_bundle(tmp_path / "b"), FakeDataPrepper(busy=2, status=status))

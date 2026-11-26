@@ -29,7 +29,7 @@ from itertools import chain
 
 BATCH_BYTES = 5 * 1024 * 1024
 BATCH_EVENTS = 5000
-BUSY = (408, 429, 502, 503)
+BUSY = (408, 429, 502, 503, 504)
 # The global tags telegraf.conf puts on every metric, and where start.sh read them.
 RUN_TAGS = {
     "run_id": "GITHUB_RUN_ID", "run_attempt": "GITHUB_RUN_ATTEMPT", "repo": "GITHUB_REPOSITORY",
