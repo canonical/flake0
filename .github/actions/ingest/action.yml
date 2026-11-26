@@ -31,6 +31,10 @@ inputs:
     description: "Bundle files not to load, one glob per line"
     required: false
     default: ""
+  verdict-path:
+    description: "The classify step's verdict output path."
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -51,6 +55,7 @@ runs:
         INGEST_PASSWORD: ${{ inputs.password }}
         INGEST_SKIP_STEPS: ${{ inputs.skip-steps }}
         INGEST_SKIP_FILES: ${{ inputs.skip-files }}
+        INGEST_VERDICT_PATH: ${{ inputs.verdict-path }}
       run: |
         python3 "$GITHUB_ACTION_PATH/scripts/ingest.py" "$BUNDLE_PATH" \
           || echo "::warning::flake0-ingest: the bundle was not loaded, see the log above"

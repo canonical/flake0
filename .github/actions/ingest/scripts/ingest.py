@@ -3,9 +3,10 @@
 
 Usage: ingest.py <bundle.tar.zst | bundle.tar.gz | extracted bundle dir>
 
-Reads INGEST_URL (https only), INGEST_USER, INGEST_PASSWORD and
-INGEST_CA (a CA file, optional) from the environment, so the password never
-shows in argv. Loading a bundle twice overwrites it rather than duplicating it.
+Reads INGEST_URL, INGEST_USER, INGEST_PASSWORD, INGEST_CA (a CA file, optional)
+and INGEST_VERDICT_PATH (classify's verdict.json, optional) from the environment,
+so the password never shows in argv. Loading a bundle twice overwrites it rather
+than duplicating it.
 """
 
 import base64
@@ -300,6 +301,22 @@ def meta_docs(files, bundle_id, tags, env_start, env_end):
             yield test(nodeid, attempt, started, end, "unfinished", None)
 
 
+def verdict_docs(path, bundle_id, tags, start):
+    if not path:
+        return
+    try:
+        with open(path, encoding="utf-8") as f:
+            verdict = json.load(f)
+    except (OSError, ValueError) as e:
+        warn(f"cannot read the verdict {path}: {e}")
+        return
+    if not isinstance(verdict, dict):
+        warn(f"the verdict {path} is not a JSON object")
+        return
+    doc = {**verdict, "bundle_id": bundle_id, "tag": tags, "@timestamp": start}
+    yield "ci-verdicts", bundle_id, doc
+
+
 def unit_doc(name, unit):
     workload = unit.get("workload-status", {})
     return {"app": name.split("/")[0], "unit": name, "workload_status": workload.get("current"),
@@ -402,6 +419,7 @@ def main(argv, post=None):
         print(__doc__.strip(), file=sys.stderr)
         return 2
     skip_files, skip_steps = env_list("INGEST_SKIP_FILES"), env_list("INGEST_SKIP_STEPS")
+    verdict_path = os.environ.get("INGEST_VERDICT_PATH")
     try:
         post = post or connect(os.environ)
         with tempfile.TemporaryDirectory() as tmp:
@@ -422,6 +440,7 @@ def main(argv, post=None):
                 metric_docs(files, bundle_id),
                 log_docs(files, bundle_id, tags, fallback_month, skip_steps),
                 meta_docs(files, bundle_id, tags, env_start, env_end),
+                verdict_docs(verdict_path, bundle_id, tags, start),
             ))
     except (Failure, OSError) as e:
         warn(str(e))

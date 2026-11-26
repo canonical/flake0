@@ -52,6 +52,7 @@ It needs Python 3.8 or later and nothing outside the standard library. `tar` nee
 | `password` | `""` | Data Prepper password |
 | `skip-steps` | `""` | Job steps not to load, one per line |
 | `skip-files` | `""` | Bundle files not to load, one glob per line |
+| `verdict-path` | `""` | The `classify` step's `verdict-path` output. Empty loads no verdict |
 
 TLS is always verified. There is no option to turn that off.
 
@@ -64,6 +65,7 @@ TLS is always verified. There is no option to turn that off.
 | `ci-logs-<source>-YYYY.MM` | non-empty log line | every `*.log` file, one index per source below |
 | `ci-meta` | run, and test attempt | `env-start.json`, `env-end.json`, `markers.ndjson` |
 | `ci-juju-status-YYYY.MM` | Juju status snapshot | `juju-status-*.ndjson` |
+| `ci-verdicts` | `classify` verdict | the `verdict-path` input |
 | `ci-flake0-logs-YYYY.MM` | non-empty line of the collector's own logs | `telegraf.log`, `*watcher.log` |
 
 The month comes from each document's own time. `telegraf.resolved.conf` is not loaded.

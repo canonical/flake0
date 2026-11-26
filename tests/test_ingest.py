@@ -355,6 +355,31 @@ def juju_status(ts, workload, message):
     return json.dumps({"ts": ts, "status": status}) + "\n"
 
 
+def test_verdict_doc(tmp_path, monkeypatch):
+    verdict = tmp_path / "verdict.json"
+    verdict.write_text(json.dumps({"job": "it (lxd)", "model": "m", "verdict": "FLAKY", "confidence_pct": 80,
+                                   "failed_tests": ["test_x"], "bundle_id": "spoofed"}))
+    monkeypatch.setenv("INGEST_VERDICT_PATH", str(verdict))
+    fake = load(write_bundle(tmp_path / "b"))
+    load(write_bundle(tmp_path / "b"), fake)
+    [doc] = fake.of("ci-verdicts")
+    run = next(d for d in fake.of("ci-meta") if d["type"] == "run")
+    assert doc["bundle_id"] == run["bundle_id"] and doc["tag"] == TAGS
+    assert doc["@timestamp"] == "2026-11-06T10:00:00.000Z"
+    assert doc["verdict"] == "FLAKY"
+
+
+@pytest.mark.parametrize("text", [None, "{not json", "[]"])
+def test_bad_verdict_skipped(tmp_path, monkeypatch, capsys, text):
+    verdict = tmp_path / "verdict.json"
+    if text is not None:
+        verdict.write_text(text)
+    monkeypatch.setenv("INGEST_VERDICT_PATH", str(verdict))
+    fake = load(write_bundle(tmp_path / "b"))
+    assert fake.of("ci-verdicts") == [] and fake.of("ci-meta")
+    assert "verdict" in capsys.readouterr().err
+
+
 def test_juju_status_docs(tmp_path, capsys):
     fake = load(write_bundle(tmp_path / "b", logs={"juju-status-root-concierge-lxd-testing.ndjson": (
         juju_status("2026-11-06T10:00:00.000Z", "maintenance", "installing")
