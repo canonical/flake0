@@ -254,6 +254,25 @@ def test_job_steps(tmp_path):
     ]
 
 
+def test_skip_steps(tmp_path, monkeypatch):
+    monkeypatch.setenv("INGEST_SKIP_STEPS", "juju debug-log\n jhack tail \n\n")
+    lines = ["##[group]Run sudo juju debug-log --replay", "unit-v-0: started",
+             "##[group]Run sudo jhack tail", "hook", "##[group]Run x", "y"]
+    fake = load(write_bundle(tmp_path / "b", logs={"job.log": "".join(
+        f"2026-11-06T06:41:2{i}.1000000Z {line}\n" for i, line in enumerate(lines))}))
+    assert [d["message"] for d in fake.of("ci-logs-job-")] == ["##[group]Run x", "y"]
+
+
+def test_skip_files(tmp_path, monkeypatch):
+    monkeypatch.setenv("INGEST_SKIP_FILES", "workload/k8s/controller-*_api-server-*.log")
+    line = "2026-11-06T07:31:52.929628643Z stdout F hi\n"
+    fake = load(write_bundle(tmp_path / "b", logs={
+        "workload/k8s/controller-0_controller-k8s_api-server-" + "a" * 64 + ".log": line,
+        "workload/k8s/v-0_testing_charm-" + "b" * 64 + ".log": line,
+    }))
+    assert [d["container"] for d in fake.of("ci-logs-k8s-")] == ["charm"]
+
+
 def test_replays_collapse_and_tracebacks_stay(tmp_path):
     history = (
         "unit-v-0: 2026-11-06 10:00:01.000 ERROR boom\n"

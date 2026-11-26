@@ -23,6 +23,7 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from fnmatch import fnmatch
 from itertools import chain
 
 BATCH_BYTES = 5 * 1024 * 1024
@@ -100,7 +101,7 @@ def doc_id(*parts):
     return hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:40]
 
 
-def regular_files(root):
+def regular_files(root, skip=()):
     """Maps bundle-relative paths to paths, for regular files only: a symlink in a
     downloaded bundle could point at a local secret."""
     files = {}
@@ -108,8 +109,9 @@ def regular_files(root):
         dirnames.sort()
         for name in sorted(filenames):
             path = os.path.join(dirpath, name)
-            if stat.S_ISREG(os.lstat(path).st_mode):
-                files[os.path.relpath(path, root)] = path
+            rel = os.path.relpath(path, root)
+            if stat.S_ISREG(os.lstat(path).st_mode) and not any(fnmatch(rel, p) for p in skip):
+                files[rel] = path
     return files
 
 
@@ -223,7 +225,11 @@ def parse_line(source, rel, line, state):
     return None
 
 
-def log_docs(files, bundle_id, tags, fallback_month):
+def env_list(name):
+    return [s.strip() for s in os.environ.get(name, "").splitlines() if s.strip()]
+
+
+def log_docs(files, bundle_id, tags, fallback_month, skip_steps=()):
     for rel in (f for f in files if f.endswith(".log")):
         ts = anchor = None
         offset = 0
@@ -247,6 +253,8 @@ def log_docs(files, bundle_id, tags, fallback_month):
             # A line without its own time, such as a traceback's, keeps the fields of the line above.
             if own and not marker and (result := parse_line(source, rel, line, state)):
                 parsed, message = result
+            if any(s in parsed.get("step", "") for s in skip_steps):
+                continue
             doc = {"bundle_id": bundle_id, "tag": tags, "file": rel, "line": n,
                    **file_fields, **parsed, "message": message}
             if ts:
@@ -393,6 +401,7 @@ def main(argv, post=None):
     if len(argv) != 1:
         print(__doc__.strip(), file=sys.stderr)
         return 2
+    skip_files, skip_steps = env_list("INGEST_SKIP_FILES"), env_list("INGEST_SKIP_STEPS")
     try:
         post = post or connect(os.environ)
         with tempfile.TemporaryDirectory() as tmp:
@@ -402,7 +411,7 @@ def main(argv, post=None):
                 if tar.returncode:
                     raise Failure(f"cannot extract {root}: {tar.stderr.strip()}")
                 root = tmp
-            files = regular_files(root)
+            files = regular_files(root, skip_files)
             tags = run_tags(files)
             env_start, env_end = read_json(files, "env-start.json"), read_json(files, "env-end.json")
             start = (env_start or {}).get("ts")
@@ -411,7 +420,7 @@ def main(argv, post=None):
             total = bulk(post, chain(
                 juju_status_docs(files, bundle_id, tags),
                 metric_docs(files, bundle_id),
-                log_docs(files, bundle_id, tags, fallback_month),
+                log_docs(files, bundle_id, tags, fallback_month, skip_steps),
                 meta_docs(files, bundle_id, tags, env_start, env_end),
             ))
     except (Failure, OSError) as e:

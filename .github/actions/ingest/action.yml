@@ -27,6 +27,14 @@ inputs:
     description: "PEM text of the CA that signed the cluster's certificate, when it is not a public one"
     required: false
     default: ""
+  skip-steps:
+    description: "Job steps not to load, one per line"
+    required: false
+    default: ""
+  skip-files:
+    description: "Bundle files not to load, one glob per line"
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -47,6 +55,8 @@ runs:
         INGEST_USER: ${{ inputs.username }}
         INGEST_PASSWORD: ${{ inputs.password }}
         CA_CERT: ${{ inputs.ca-cert }}
+        INGEST_SKIP_STEPS: ${{ inputs.skip-steps }}
+        INGEST_SKIP_FILES: ${{ inputs.skip-files }}
       run: |
         if [ -n "$CA_CERT" ]; then
           export INGEST_CA="$RUNNER_TEMP/flake0-ingest-ca.pem"
