@@ -50,7 +50,6 @@ It needs Python 3.8 or later and nothing outside the standard library. `tar` nee
 | `url` | `""` | Data Prepper URL. Only `https://` is accepted. Empty skips loading |
 | `username` | `""` | Data Prepper user |
 | `password` | `""` | Data Prepper password |
-| `ca-cert` | `""` | PEM text of the CA that signed the cluster's certificate, when it is not a public one |
 | `skip-steps` | `""` | Job steps not to load, one per line |
 | `skip-files` | `""` | Bundle files not to load, one glob per line |
 

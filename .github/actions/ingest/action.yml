@@ -1,7 +1,7 @@
 name: ingest
 description: >-
   Loads a flake0 collect bundle into OpenSearch 2.x via Data Prepper: metrics, logs, run and test
-  metadata. Never fails the job. Part of the Flake0 AI debugging suite.
+  metadata.
 author: canonical
 branding:
   icon: upload-cloud
@@ -12,7 +12,7 @@ inputs:
     description: "Path to a collect bundle archive (tar.zst or tar.gz), e.g. the collect stop output"
     required: true
   url:
-    description: "Data Prepper URL, https only. Empty skips loading, e.g. on pull requests from forks."
+    description: "Data Prepper URL"
     required: false
     default: ""
   username:
@@ -20,11 +20,7 @@ inputs:
     required: false
     default: ""
   password:
-    description: "Data Prepper password. Pass a secret."
-    required: false
-    default: ""
-  ca-cert:
-    description: "PEM text of the CA that signed the cluster's certificate, when it is not a public one"
+    description: "Data Prepper password"
     required: false
     default: ""
   skip-steps:
@@ -45,7 +41,6 @@ runs:
       run: |
         echo "::notice::flake0-ingest: no url given, not loading the bundle"
 
-    # Inputs reach the script through env, never the command line or the script body.
     - name: Load bundle
       if: ${{ inputs.url != '' }}
       shell: bash
@@ -54,13 +49,8 @@ runs:
         INGEST_URL: ${{ inputs.url }}
         INGEST_USER: ${{ inputs.username }}
         INGEST_PASSWORD: ${{ inputs.password }}
-        CA_CERT: ${{ inputs.ca-cert }}
         INGEST_SKIP_STEPS: ${{ inputs.skip-steps }}
         INGEST_SKIP_FILES: ${{ inputs.skip-files }}
       run: |
-        if [ -n "$CA_CERT" ]; then
-          export INGEST_CA="$RUNNER_TEMP/flake0-ingest-ca.pem"
-          printf '%s\n' "$CA_CERT" > "$INGEST_CA"
-        fi
         python3 "$GITHUB_ACTION_PATH/scripts/ingest.py" "$BUNDLE_PATH" \
           || echo "::warning::flake0-ingest: the bundle was not loaded, see the log above"
