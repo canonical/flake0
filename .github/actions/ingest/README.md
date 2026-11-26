@@ -63,7 +63,8 @@ TLS is always verified. There is no option to turn that off.
 | `ci-metrics-YYYY.MM` | Telegraf metric | `metrics*.json` |
 | `ci-flake0-metrics-YYYY.MM` | Telegraf's `internal_*` metric, about the collector itself | `metrics*.json` |
 | `ci-logs-<source>-YYYY.MM` | non-empty log line | every `*.log` file, one index per source below |
-| `ci-meta` | run, and test attempt | `env-start.json`, `env-end.json`, `markers.ndjson` |
+| `ci-meta` | run | `env-start.json`, `env-end.json` |
+| `ci-tests` | test attempt | `markers.ndjson` |
 | `ci-juju-status-YYYY.MM` | Juju status snapshot | `juju-status-*.ndjson` |
 | `ci-verdicts` | `classify` verdict | the `verdict-path` input |
 | `ci-flake0-logs-YYYY.MM` | non-empty line of the collector's own logs | `telegraf.log`, `*watcher.log` |
@@ -99,12 +100,12 @@ they come from the job's `GITHUB_*` variables, or are `local`.
   the time and fields of the line before it, so `level: ERROR` finds the whole traceback. A line with no time before it, such as
   most of `pytest.log`, has no `@timestamp` and doesn't show up in time-filtered views. Search those
   by `bundle_id`.
-- **Meta** has one `type: run` document per bundle, with `env_start` and `env_end`, and one
-  `type: test` document per test attempt, with `nodeid`, `attempt`, `outcome`, `@timestamp` (start),
-  `end`, `duration`, and for a failed attempt `failure`, the end of pytest's report as searchable
-  text. A test that never finished, for example because the job timed out, has
-  `outcome: unfinished` and ends when the job did. Snap lists and snapd changes are stored but not
-  searchable.
+- **Meta** has one `type: run` document per bundle, with `env_start` and `env_end`. Snap lists and
+  snapd changes are stored but not searchable.
+- **Tests** has one document per test attempt, with `nodeid`, `name` (the part after the last `::`),
+  `attempt`, `outcome`, `@timestamp` (start), `end`, `duration`, and for a failed attempt `failure`,
+  the end of pytest's report as searchable text. A test that never finished, for example because the
+  job timed out, has `outcome: unfinished` and ends when the job did.
 - **Juju status** has one document per 30 s snapshot, with `controller`, `model`
   and a `units` list of `app`, `unit`, `workload_status`, `agent_status` and `message`, subordinates
   included. The full `juju status` output is in `status`, stored but not searchable. `units` is a
@@ -129,7 +130,7 @@ message:"apparmor DENIED"
 PSI while a test was failing. First get the failed attempt's window:
 
 ```json
-GET ci-meta/_search
+GET ci-tests/_search
 {"query": {"bool": {"filter": [
   {"term": {"outcome": "failed"}},
   {"term": {"nodeid": "tests/integration/test_x.py::test_y"}}]}}}

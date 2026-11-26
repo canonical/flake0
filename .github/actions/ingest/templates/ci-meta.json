@@ -62,18 +62,6 @@
             }
           }
         },
-        "nodeid": {
-          "type": "keyword"
-        },
-        "attempt": {
-          "type": "integer"
-        },
-        "outcome": {
-          "type": "keyword"
-        },
-        "duration": {
-          "type": "double"
-        },
         "env_start": {
           "properties": {
             "kernel": {
@@ -87,9 +75,6 @@
               "type": "keyword"
             }
           }
-        },
-        "failure": {
-          "type": "text"
         }
       }
     }

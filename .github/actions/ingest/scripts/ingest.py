@@ -286,9 +286,10 @@ def meta_docs(files, bundle_id, tags, env_start, env_end):
     yield "ci-meta", bundle_id, run
 
     def test(nodeid, attempt, started, finished, outcome, duration, failure=None):
-        doc = {"type": "test", "bundle_id": bundle_id, "tag": tags, "nodeid": nodeid, "attempt": attempt,
-               "outcome": outcome, "@timestamp": started, "end": finished, "duration": duration, "failure": failure}
-        return "ci-meta", doc_id(bundle_id, nodeid, attempt), doc
+        doc = {"bundle_id": bundle_id, "tag": tags, "nodeid": nodeid,
+               "name": nodeid.rpartition("::")[2], "attempt": attempt, "outcome": outcome,
+               "@timestamp": started, "end": finished, "duration": duration, "failure": failure}
+        return "ci-tests", doc_id(bundle_id, nodeid, attempt), doc
 
     if "markers.ndjson" not in files:
         return
@@ -297,6 +298,8 @@ def meta_docs(files, bundle_id, tags, env_start, env_end):
         try:
             event, nodeid, ts = m["event"], m["nodeid"], m["ts"]
         except (KeyError, TypeError):
+            continue
+        if not isinstance(nodeid, str) or not isinstance(ts, str):
             continue
         if event == "start":
             attempts[nodeid] = attempts.get(nodeid, 0) + 1

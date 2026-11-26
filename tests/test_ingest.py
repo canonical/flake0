@@ -329,18 +329,18 @@ def test_meta_docs(tmp_path):
         {"ts": "2026-11-06T10:00:06.000Z", "event": "start", "nodeid": "t.py::flaky"},
         {"ts": "2026-11-06T10:00:07.000Z", "event": "finish", "nodeid": "t.py::flaky", "outcome": "passed", "duration": 1.0},
         '{"ts": "2026-11-06T10:00:0\n',
+        {"ts": None, "event": "start", "nodeid": "t.py::broken"},
         {"ts": "2026-11-06T10:00:08.000Z", "event": "start", "nodeid": "t.py::hung"},
     ]))
-    meta = fake.of("ci-meta")
-    run = next(d for d in meta if d["type"] == "run")
+    [run] = fake.of("ci-meta")
+    tests = fake.of("ci-tests")
     assert run["@timestamp"] == "2026-11-06T10:00:00.000Z"
     assert run["end"] == "2026-11-06T10:30:00.000Z"
     assert run["env_start"]["snaps"] == [{"name": "lxd"}]
     assert run["tag"] == TAGS
-    assert [d.get("failure") for d in meta if d["type"] == "test" and d["outcome"] == "failed"] == ["E   assert 1 == 2"]
-    tests = sorted((d["nodeid"], d["attempt"], d["outcome"], d["@timestamp"], d["end"])
-                   for d in meta if d["type"] == "test")
-    assert tests == [
+    assert [d.get("failure") for d in tests if d["outcome"] == "failed"] == ["E   assert 1 == 2"]
+    assert {d["name"] for d in tests} == {"flaky", "hung"}
+    assert sorted((d["nodeid"], d["attempt"], d["outcome"], d["@timestamp"], d["end"]) for d in tests) == [
         ("t.py::flaky", 1, "failed", "2026-11-06T10:00:00.000Z", "2026-11-06T10:00:05.000Z"),
         ("t.py::flaky", 2, "passed", "2026-11-06T10:00:06.000Z", "2026-11-06T10:00:07.000Z"),
         ("t.py::hung", 1, "unfinished", "2026-11-06T10:00:08.000Z", "2026-11-06T10:30:00.000Z"),
