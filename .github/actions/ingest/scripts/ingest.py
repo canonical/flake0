@@ -3,8 +3,8 @@
 
 Usage: ingest.py <bundle.tar.zst | bundle.tar.gz | extracted bundle dir>
 
-Reads OPENSEARCH_URL (https only), OPENSEARCH_USER, OPENSEARCH_PASSWORD and
-OPENSEARCH_CA (a CA file, optional) from the environment, so the password never
+Reads INGEST_URL (https only), INGEST_USER, INGEST_PASSWORD and
+INGEST_CA (a CA file, optional) from the environment, so the password never
 shows in argv. Loading a bundle twice overwrites it rather than duplicating it.
 """
 
@@ -12,6 +12,7 @@ import base64
 import hashlib
 import json
 import os
+import random
 import re
 import ssl
 import stat
@@ -24,8 +25,9 @@ import urllib.request
 from datetime import datetime, timezone
 from itertools import chain
 
-TEMPLATES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "templates")
 BATCH_BYTES = 5 * 1024 * 1024
+BATCH_EVENTS = 5000
+BUSY = (408, 429, 502, 503)
 # The global tags telegraf.conf puts on every metric, and where start.sh read them.
 RUN_TAGS = {
     "run_id": "GITHUB_RUN_ID", "run_attempt": "GITHUB_RUN_ATTEMPT", "repo": "GITHUB_REPOSITORY",
@@ -325,112 +327,74 @@ def juju_status_docs(files, bundle_id, tags):
 
 
 def connect(env):
-    """Returns request(method, path, body) -> (status, json) for the cluster in env."""
-    url = env.get("OPENSEARCH_URL", "").rstrip("/")
+    """Returns post(body) -> (status, text) for the url in env."""
+    url = env.get("INGEST_URL", "").rstrip("/")
     if not url.startswith("https://"):
-        raise Failure("OPENSEARCH_URL must be an https:// URL")
+        raise Failure("INGEST_URL must be an https:// URL")
     try:
-        context = ssl.create_default_context(cafile=env.get("OPENSEARCH_CA") or None)
+        context = ssl.create_default_context(cafile=env.get("INGEST_CA") or None)
     except (OSError, ssl.SSLError) as e:
-        raise Failure(f"cannot read OPENSEARCH_CA {env['OPENSEARCH_CA']}: {e}") from e
-    headers = {}
-    if env.get("OPENSEARCH_USER"):
+        raise Failure(f"cannot read INGEST_CA {env['INGEST_CA']}: {e}") from e
+    headers = {"Content-Type": "application/json"}
+    if env.get("INGEST_USER"):
         # Sent up front: urllib's auth handler waits for a 401, sending every batch twice.
-        token = f"{env['OPENSEARCH_USER']}:{env.get('OPENSEARCH_PASSWORD', '')}".encode()
+        token = f"{env['INGEST_USER']}:{env.get('INGEST_PASSWORD', '')}".encode()
         headers["Authorization"] = "Basic " + base64.b64encode(token).decode()
 
     # No redirects: urllib would send the password along, even to an http:// Location.
     opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=context), NoRedirect)
 
-    def request(method, path, body=None, ctype="application/json"):
-        req = urllib.request.Request(url + path, body, {**headers, "Content-Type": ctype}, method=method)
+    def post(body):
+        req = urllib.request.Request(url, body, headers, method="POST")
         try:
             with opener.open(req, timeout=120) as r:
-                return r.status, json.load(r)
+                return r.status, r.read(200).decode(errors="replace")
         except urllib.error.HTTPError as e:
-            try:
-                return e.code, json.load(e)
-            except ValueError:
-                return e.code, {}
+            return e.code, e.read(200).decode(errors="replace")
         except (urllib.error.URLError, OSError) as e:
-            raise Failure(f"cannot reach {url}: {e}") from e
+            raise Failure(f"cannot reach Data Prepper: {e}") from e
 
-    return request
-
-
-def merge_mappings(*mappings):
-    merged = {}
-    for m in mappings:
-        for key, value in m.items():
-            merged[key] = {**merged.get(key, {}), **value} if key == "properties" else value
-    return merged
+    return post
 
 
-def install_templates(request):
-    """Installs templates/*.json. A file without index_patterns is a component template,
-    shared by the index templates that list it in composed_of, so it goes first."""
-    templates = {}
-    for name in sorted(os.listdir(TEMPLATES)):
-        with open(os.path.join(TEMPLATES, name)) as f:
-            templates[name[:-len(".json")]] = json.load(f)
-    components = {name: t for name, t in templates.items() if "index_patterns" not in t}
-    for name, template in sorted(templates.items(), key=lambda item: item[0] not in components):
-        kind = "_component_template" if name in components else "_index_template"
-        status, resp = request("PUT", f"/{kind}/{name}", json.dumps(template).encode())
-        if status == 403:
-            warn(f"no permission to install the {name} template, loading with the one in place")
-        elif status >= 300:
-            raise Failure(f"installing the {name} template failed: HTTP {status} {resp}")
-        if name in components:
-            continue
-        # A template applies only when an index is created, so add new fields to existing ones
-        # too. 404 means no index yet. A field that changed type needs a reindex.
-        pattern = template["index_patterns"][0]
-        mappings = merge_mappings(*(components[c]["template"]["mappings"] for c in template.get("composed_of", [])),
-                                  template.get("template", {}).get("mappings", {}))
-        status, resp = request("PUT", f"/{pattern}/_mapping", json.dumps(mappings).encode())
-        if status not in (200, 404):
-            warn(f"could not update the mapping of {pattern}, loading anyway: HTTP {status} {resp}")
-
-
-def send(request, body):
-    for wait in (1, 5, 15, None):
-        status, resp = request("POST", "/_bulk", body, "application/x-ndjson")
-        failed = [r for item in resp.get("items", []) for r in item.values() if r.get("status", 500) >= 300]
-        throttled = status == 429 or any(r.get("status") == 429 for r in failed)
-        if not throttled or wait is None:
-            break
-        time.sleep(wait)  # every document has its id, so resending the batch is safe
+def send(post, entries):
+    body = b"[" + b",".join(entries) + b"]"
+    for wait in (5, 15, 30, *[60] * 14, None):
+        try:
+            status, reply = post(body)
+        except Failure:
+            if wait is None:
+                raise
+        else:
+            if status not in BUSY or wait is None:
+                break
+        time.sleep(wait * random.uniform(0.5, 1.5))
     if status >= 300:
-        raise Failure(f"bulk upload failed: HTTP {status} {resp}")
-    if failed:
-        reasons = "; ".join(str(r.get("error", {}).get("reason", r.get("status"))) for r in failed[:3])
-        raise Failure(f"OpenSearch rejected {len(failed)} documents, first: {reasons}")
+        raise Failure(f"bulk upload failed: HTTP {status} {reply.strip()}")
 
 
-def bulk(request, docs):
+def bulk(post, docs):
     batch, size, total = [], 0, 0
     for index, id_, doc in docs:
-        entry = (json.dumps({"index": {"_index": index, "_id": id_}}) + "\n"
-                 + json.dumps(doc, separators=(",", ":")) + "\n").encode()
-        batch.append(entry)
-        size += len(entry)
-        if size >= BATCH_BYTES:
-            send(request, b"".join(batch))
+        entry = json.dumps({"index": index, "id": id_, "doc": doc}, separators=(",", ":")).encode()
+        if batch and (size + len(entry) > BATCH_BYTES or len(batch) >= BATCH_EVENTS):
+            send(post, batch)
             total += len(batch)
             batch, size = [], 0
+        batch.append(entry)
+        size += len(entry)
     if batch:
-        send(request, b"".join(batch))
+        send(post, batch)
         total += len(batch)
     return total
 
 
-def main(argv, request=None):
+def main(argv, post=None):
     if len(argv) != 1:
         print(__doc__.strip(), file=sys.stderr)
         return 2
     try:
-        request = request or connect(os.environ)
+        post = post or connect(os.environ)
         with tempfile.TemporaryDirectory() as tmp:
             root = argv[0]
             if not os.path.isdir(root):
@@ -444,12 +408,11 @@ def main(argv, request=None):
             start = (env_start or {}).get("ts")
             bundle_id = doc_id(tags["run_id"], tags["run_attempt"], tags["job"], tags["runner_name"], start)
             fallback_month = month(start or iso(datetime.now(timezone.utc), "0"))
-            install_templates(request)
-            total = bulk(request, chain(
-                meta_docs(files, bundle_id, tags, env_start, env_end),
+            total = bulk(post, chain(
                 juju_status_docs(files, bundle_id, tags),
                 metric_docs(files, bundle_id),
                 log_docs(files, bundle_id, tags, fallback_month),
+                meta_docs(files, bundle_id, tags, env_start, env_end),
             ))
     except (Failure, OSError) as e:
         warn(str(e))

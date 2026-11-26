@@ -44,9 +44,6 @@ jobs:
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
-    env:
-      # for the throwaway OpenSearch below, not a secret
-      OS_PASSWORD: Flake0-smoke-Pw1!
     steps:
       - uses: actions/checkout@v7
 
@@ -77,14 +74,11 @@ jobs:
               time.sleep(45)
 
           def test_fail():
-              # longer than 2 PSI intervals, so the ingest check finds PSI while it ran
-              time.sleep(6)
+              time.sleep(1)
               assert False, "intentional failure for collect smoke"
           EOF
           echo flake0-smoke-kmsg | sudo tee /dev/kmsg > /dev/null
           echo flake0-smoke-joblog
-          # what the ingest check searches for
-          echo 'audit: apparmor="DENIED" operation="open" profile="flake0-smoke" name="/flake0"' | sudo tee /dev/kmsg > /dev/null
           sudo snap install hello-world
           # >90s of collection so the 30s-tier inputs (procstat, processes) yield
           # several samples — the overhead assertions below need a delta.
@@ -282,75 +276,6 @@ jobs:
             printf "metrics.json: %.1f MB over %.0fs => %.1f MB/30min uncompressed\n", raw/1048576, span, raw/1048576/span*1800
             printf "bundle:       %.2f MB (%.0fx smaller)\n", packed/1048576, raw/packed
           }'
-
-      # Loads this bundle into a throwaway OpenSearch with TLS, as a consumer would, then
-      # runs the searches the ingest README documents. After the overhead checks, so the
-      # JVM is not measured, and on x86 only, because ingest is plain Python.
-      - name: Start OpenSearch
-        if: matrix.os == 'ubuntu-24.04'
-        run: |
-          set -euo pipefail
-          docker run -d --name opensearch -p 127.0.0.1:9200:9200 -e discovery.type=single-node \
-            -e OPENSEARCH_INITIAL_ADMIN_PASSWORD="$OS_PASSWORD" -e OPENSEARCH_JAVA_OPTS='-Xms512m -Xmx512m' \
-            opensearchproject/opensearch:2.19.5
-          # The port answers before the security plugin is ready, so wait for health.
-          for _ in $(seq 90); do
-            if docker exec opensearch cat /usr/share/opensearch/config/root-ca.pem > "$RUNNER_TEMP/os-ca.pem" 2> /dev/null \
-              && curl -sf --cacert "$RUNNER_TEMP/os-ca.pem" -u "admin:$OS_PASSWORD" https://localhost:9200/_cluster/health > /dev/null; then
-              { echo 'OS_CA<<EOF'; cat "$RUNNER_TEMP/os-ca.pem"; echo EOF; } >> "$GITHUB_ENV"
-              exit 0
-            fi
-            sleep 2
-          done
-          docker logs opensearch 2>&1 | tail -50
-          exit 1
-
-      - name: Load the bundle
-        if: matrix.os == 'ubuntu-24.04'
-        uses: ./.github/actions/ingest
-        with:
-          bundle-path: ${{ steps.stop.outputs.bundle-path }}
-          url: https://localhost:9200
-          username: admin
-          password: ${{ env.OS_PASSWORD }}
-          ca-cert: ${{ env.OS_CA }}
-
-      - name: Assert the bundle is searchable
-        if: matrix.os == 'ubuntu-24.04'
-        env:
-          BUNDLE: ${{ steps.stop.outputs.bundle-path }}
-        run: |
-          set -euxo pipefail
-          os() { curl -sf --cacert "$RUNNER_TEMP/os-ca.pem" -u "admin:$OS_PASSWORD" -H 'Content-Type: application/json' "https://localhost:9200$1" "${@:2}"; }
-          os '/ci-*/_refresh' -X POST > /dev/null
-          os '/_cat/indices/ci-*?v'
-
-          # every number is a double, though Go writes a whole float like usage_steal 0.0 as 0
-          os '/ci-metrics-*/_mapping/field/cpu.usage_steal' | jq -e '[.[].mappings[].mapping.usage_steal.type] | length > 0 and all(. == "double")'
-
-          # the collector's own metrics are kept out of ci-metrics-*
-          os '/ci-metrics-*/_count' -d '{"query": {"prefix": {"measurement_name": "internal_"}}}' | jq -e '.count == 0'
-          os '/ci-flake0-metrics-*/_count' | jq -e '.count > 0'
-
-          # the AppArmor line written to /dev/kmsg above, in the host logs' index
-          os '/ci-logs-host-*/_count' -d '{"query": {"bool": {"filter": [
-            {"match_phrase": {"message": "apparmor DENIED"}}, {"match_phrase": {"message": "flake0-smoke"}}]}}}' \
-            | jq -e '.count >= 1'
-
-          # PSI while test_fail was failing
-          T=$(os '/ci-meta/_search' -d '{"query": {"bool": {"filter": [
-            {"term": {"outcome": "failed"}}, {"wildcard": {"nodeid": "*::test_fail"}}]}}}' | jq -ec '.hits.hits[0]._source')
-          jq -e '.failure | contains("intentional failure for collect smoke")' <<< "$T"
-          os '/ci-metrics-*/_count' -d "$(jq -n --argjson t "$T" '{query: {bool: {filter: [
-            {term: {bundle_id: $t.bundle_id}}, {term: {measurement_name: "pressure"}},
-            {range: {"@timestamp": {gte: $t["@timestamp"], lte: $t.end}}}]}}}')" | jq -e '.count > 0'
-
-          # loading the bundle again overwrites it, and the script fails loudly where the action warns
-          BEFORE=$(os '/_cat/count/ci-*?h=count')
-          OPENSEARCH_URL=https://localhost:9200 OPENSEARCH_USER=admin OPENSEARCH_PASSWORD="$OS_PASSWORD" \
-            OPENSEARCH_CA="$RUNNER_TEMP/os-ca.pem" python3 .github/actions/ingest/scripts/ingest.py "$BUNDLE"
-          os '/ci-*/_refresh' -X POST > /dev/null
-          [ "$(os '/_cat/count/ci-*?h=count')" = "$BEFORE" ]
 
   hostile-tags:
     # Regression test: tag values are passed to Telegraf through the environment

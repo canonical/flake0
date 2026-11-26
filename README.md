@@ -43,9 +43,9 @@ dashboard PNG straight from a `collect` bundle, with zero configuration:
 
 See [`.github/actions/plot/README.md`](.github/actions/plot/README.md) for details.
 
-The `ingest` action (`.github/actions/ingest`) loads a `collect` bundle into OpenSearch 2.x, so
-metrics, logs and test results from many runs can be searched together. The same script runs on
-your machine against a downloaded bundle:
+The `ingest` action (`.github/actions/ingest`) loads a `collect` bundle into OpenSearch 2.x via
+Data Prepper, so metrics, logs and test results from many runs can be searched together. The same
+script runs on your machine against a downloaded bundle:
 
 ```yaml
 - name: Load into OpenSearch
@@ -53,9 +53,9 @@ your machine against a downloaded bundle:
   uses: canonical/flake0/.github/actions/ingest@main
   with:
     bundle-path: ${{ steps.collect.outputs.bundle-path }}
-    url: ${{ secrets.OPENSEARCH_URL }}
-    username: ${{ secrets.OPENSEARCH_USER }}
-    password: ${{ secrets.OPENSEARCH_PASSWORD }}
+    url: ${{ secrets.FLAKE0_INGEST_URL }}
+    username: ${{ secrets.FLAKE0_INGEST_USER }}
+    password: ${{ secrets.FLAKE0_INGEST_PASSWORD }}
 ```
 
 See [`.github/actions/ingest/README.md`](.github/actions/ingest/README.md) for details.

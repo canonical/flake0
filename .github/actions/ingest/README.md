@@ -1,8 +1,8 @@
 # Flake0 — ingest action
 
-Loads a `collect` bundle into OpenSearch 2.x, so you can search one run's metrics, logs and tests
-together, or compare a flaky run with a good one. It runs after `collect` stops, in CI or on your
-machine against a downloaded bundle. Nothing streams during the job.
+Loads a `collect` bundle into OpenSearch 2.x via Data Prepper, so you can search one run's metrics,
+logs and tests together, or compare a flaky run with a good one. It runs after `collect` stops, in
+CI or on your machine against a downloaded bundle. Nothing streams during the job.
 
 Part of the **Flake0** AI debugging suite for CI tests.
 
@@ -20,10 +20,9 @@ Part of the **Flake0** AI debugging suite for CI tests.
   uses: canonical/flake0/.github/actions/ingest@main
   with:
     bundle-path: ${{ steps.collect.outputs.bundle-path }}
-    url: ${{ secrets.OPENSEARCH_URL }}
-    username: ${{ secrets.OPENSEARCH_USER }}
-    password: ${{ secrets.OPENSEARCH_PASSWORD }}
-    ca-cert: ${{ secrets.OPENSEARCH_CA }}
+    url: ${{ secrets.FLAKE0_INGEST_URL }}
+    username: ${{ secrets.FLAKE0_INGEST_USER }}
+    password: ${{ secrets.FLAKE0_INGEST_PASSWORD }}
 ```
 
 `ingest` never fails your job. If loading fails it prints the reason and a warning. With an empty
@@ -34,9 +33,9 @@ environment, so the password never shows in the process list. It exits non-zero 
 
 ```bash
 gh run download <run-id> -n flake0-collect-<run-id>-1-<job>
-export OPENSEARCH_URL=https://opensearch.example.com:9200 OPENSEARCH_USER=flake0
-read -rs OPENSEARCH_PASSWORD && export OPENSEARCH_PASSWORD
-export OPENSEARCH_CA=~/opensearch-ca.pem   # only for a private CA
+export INGEST_URL=https://data-prepper.example.com/log/ingest INGEST_USER=flake0
+read -rs INGEST_PASSWORD && export INGEST_PASSWORD
+export INGEST_CA=~/opensearch-ca.pem   # only for a private CA
 python3 .github/actions/ingest/scripts/ingest.py flake0-bundle.tar.zst
 ```
 
@@ -48,9 +47,9 @@ It needs Python 3.8 or later and nothing outside the standard library. `tar` nee
 | Input | Default | Description |
 |---|---|---|
 | `bundle-path` | *(required)* | Path to a `collect` archive (`.tar.zst` or `.tar.gz`) |
-| `url` | `""` | OpenSearch URL. Only `https://` is accepted. Empty skips loading |
-| `username` | `""` | OpenSearch user |
-| `password` | `""` | OpenSearch password |
+| `url` | `""` | Data Prepper URL. Only `https://` is accepted. Empty skips loading |
+| `username` | `""` | Data Prepper user |
+| `password` | `""` | Data Prepper password |
 | `ca-cert` | `""` | PEM text of the CA that signed the cluster's certificate, when it is not a public one |
 
 TLS is always verified. There is no option to turn that off.
@@ -181,13 +180,8 @@ GET ci-logs-host-*/_search
 
 ## Cluster setup
 
-The user needs, on `ci-*`, the index permissions `create_index` and `write`, plus the cluster
-permission `cluster_composite_ops` for bulk loading. Each run also installs the templates in
-`templates/`, which needs the cluster permissions `cluster:admin/component_template/put` and
-`indices:admin/index_template/put`. A file without `index_patterns` is a component template, such
-as `ci-logs-common` with the fields every log index shares. Without the permissions, the script
-warns and loads with the templates already in place. An admin can install them once, components
-first:
+The index templates in `templates/` need to be installed once on the cluster, component templates
+(the files without `index_patterns`) first:
 
 ```bash
 cd .github/actions/ingest/templates
@@ -197,11 +191,6 @@ for f in $(grep -L index_patterns *.json) $(grep -l index_patterns *.json); do
     "https://opensearch.example.com:9200/$kind/${f%.json}" -d @"$f"
 done
 ```
-
-A template applies when an index is created, so each run also adds the templates' new fields to the
-existing indices. `write` allows that. Documents loaded before a new field existed become searchable
-on it once their bundle is loaded again. A field that changes type cannot be updated in place: the
-script warns, and that index needs a reindex.
 
 ## Limits
 

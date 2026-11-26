@@ -1,4 +1,4 @@
-"""Tests for .github/actions/ingest/scripts/ingest.py, with OpenSearch faked."""
+"""Tests for .github/actions/ingest/scripts/ingest.py, with Data Prepper faked."""
 
 import importlib.util
 import json
@@ -20,37 +20,24 @@ TAGS = {
 }
 
 
-class FakeOpenSearch:
-    """Records requests and answers like OpenSearch, failing items listed in `reject`."""
+class FakeDataPrepper:
+    """Records batches and answers like Data Prepper."""
 
-    def __init__(self, template_status=200, reject=(), throttle=0, mapping_status=200):
-        self.calls, self.docs, self.bodies = [], {}, {}
-        self.template_status, self.reject, self.throttle = template_status, reject, throttle
-        self.mapping_status = mapping_status
+    def __init__(self, busy=0, status=408):
+        self.batches, self.docs, self.busy, self.status = [], {}, busy, status
 
-    def __call__(self, method, path, body=None, ctype="application/json"):
-        self.calls.append((method, path))
-        if method == "PUT":
-            self.bodies[path] = json.loads(body)
-        if path.startswith(("/_index_template/", "/_component_template/")):
-            json.loads(body)
-            return self.template_status, {}
-        if path.endswith("/_mapping"):
-            json.loads(body)
-            return self.mapping_status, {"error": {"reason": "mapper [model] cannot be changed"}}
-        if self.throttle:
-            self.throttle -= 1
-            return 429, {}
-        lines = body.decode().splitlines()
-        items = []
-        for action, doc in zip(lines[::2], lines[1::2]):
-            meta = json.loads(action)["index"]
-            if meta["_id"] in self.reject:
-                items.append({"index": {"status": 400, "error": {"reason": "mapper_parsing_exception"}}})
-                continue
-            self.docs[(meta["_index"], meta["_id"])] = json.loads(doc)
-            items.append({"index": {"status": 201}})
-        return 200, {"errors": any(i["index"]["status"] >= 300 for i in items), "items": items}
+    def __call__(self, body):
+        if self.busy:
+            self.busy -= 1
+            if self.status is None:
+                raise ingest.Failure("cannot reach Data Prepper: connection reset")
+            return self.status, "busy"
+        events = json.loads(body)
+        self.batches.append(events)
+        for event in events:
+            assert set(event) == {"index", "id", "doc"}
+            self.docs[(event["index"], event["id"])] = event["doc"]
+        return 200, "200 OK"
 
     def of(self, prefix):
         return [doc for (index, _), doc in self.docs.items() if index.startswith(prefix)]
@@ -79,8 +66,8 @@ def write_bundle(root, logs=None, metrics=None, markers=None):
 
 
 def load(root, fake=None):
-    fake = fake or FakeOpenSearch()
-    assert ingest.main([str(root)], request=fake) == 0
+    fake = fake or FakeDataPrepper()
+    assert ingest.main([str(root)], post=fake) == 0
     return fake
 
 
@@ -371,7 +358,7 @@ def test_juju_status_docs(tmp_path, capsys):
 
 
 def test_bundle_id_tells_matrix_legs_apart(tmp_path):
-    fake = FakeOpenSearch()
+    fake = FakeDataPrepper()
     load(write_bundle(tmp_path / "a"), fake)
     load(write_bundle(tmp_path / "b", metrics=[[metric("cpu", {"x": 1}, 1793959200000, {**TAGS, "runner_name": "r2"})]]), fake)
     assert len({d["bundle_id"] for d in fake.of("ci-meta")}) == 2
@@ -395,25 +382,6 @@ def test_archive_input(tmp_path):
     assert [d["file"] for d in fake.of("ci-logs-")] == ["kernel.log"]
 
 
-LOG_SOURCES = ["app", "host", "job", "juju", "k8s", "lxd", "pytest"]
-
-
-def test_templates_and_mappings_installed_first(tmp_path, capsys):
-    fake = load(write_bundle(tmp_path / "b"))
-    puts = [p for _, p in fake.calls if p != "/_bulk"]
-    assert puts == ["/_component_template/ci-logs-common", "/_component_template/ci-metrics-common"] + [
-        p for name, pattern in [("ci-flake0-logs", "ci-flake0-logs-*"), ("ci-flake0-metrics", "ci-flake0-metrics-*"),
-                                ("ci-juju-status", "ci-juju-status-*"),
-                                *((f"ci-logs-{s}", f"ci-logs-{s}-*") for s in LOG_SOURCES),
-                                ("ci-meta", "ci-meta"), ("ci-metrics", "ci-metrics-*")]
-        for p in (f"/_index_template/{name}", f"/{pattern}/_mapping")]
-    # each log index gets the shared fields of the component template
-    assert fake.bodies["/ci-logs-juju-*/_mapping"]["properties"]["message"] == {"type": "text"}
-    assert fake.bodies["/_index_template/ci-logs-juju"]["composed_of"] == ["ci-logs-common"]
-    assert fake.bodies["/ci-flake0-metrics-*/_mapping"]["dynamic_templates"]
-    assert capsys.readouterr().err == ""
-
-
 def test_logs_split_by_source(tmp_path):
     sources = {
         "juju-debug-root-lxd-testing.log": "juju", "workload/k8s/valkey-0_testing_charm-1.log": "k8s",
@@ -428,38 +396,10 @@ def test_logs_split_by_source(tmp_path):
                        for rel, source in sources.items()}
 
 
-def test_template_403_tolerated(tmp_path, capsys):
-    fake = load(write_bundle(tmp_path / "b"), FakeOpenSearch(template_status=403))
-    assert fake.of("ci-metrics-")
-    assert "no permission" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize("status, warned", [(404, False), (400, True), (403, True)])
-def test_mapping_update_never_blocks_the_load(tmp_path, capsys, status, warned):
-    # 404: no index yet. 400: a field changed type, which needs a reindex.
-    fake = load(write_bundle(tmp_path / "b"), FakeOpenSearch(mapping_status=status))
-    assert fake.of("ci-metrics-")
-    assert ("cannot be changed" in capsys.readouterr().err) == warned
-
-
-def test_template_error_fails(tmp_path):
-    assert ingest.main([str(write_bundle(tmp_path / "b"))], request=FakeOpenSearch(template_status=400)) == 1
-
-
-def test_rejected_documents_fail(tmp_path, capsys):
-    class Reject(FakeOpenSearch):
-        def __call__(self, method, path, body=None, ctype="application/json"):
-            if path == "/_bulk":
-                self.reject = {json.loads(body.decode().splitlines()[0])["index"]["_id"]}
-            return super().__call__(method, path, body, ctype)
-
-    assert ingest.main([str(write_bundle(tmp_path / "b"))], request=Reject()) == 1
-    assert "mapper_parsing_exception" in capsys.readouterr().err
-
-
-def test_throttled_bulk_retried(tmp_path, monkeypatch):
+@pytest.mark.parametrize("status", [408, None])
+def test_throttled_bulk_retried(tmp_path, monkeypatch, status):
     monkeypatch.setattr(ingest.time, "sleep", lambda _: None)
-    fake = load(write_bundle(tmp_path / "b"), FakeOpenSearch(throttle=2))
+    fake = load(write_bundle(tmp_path / "b"), FakeDataPrepper(busy=2, status=status))
     assert fake.of("ci-metrics-")
 
 
@@ -467,26 +407,28 @@ def test_batches_split(tmp_path, monkeypatch):
     monkeypatch.setattr(ingest, "BATCH_BYTES", 200)
     fake = load(write_bundle(tmp_path / "b", logs={"kernel.log": "".join(
         f"2026-11-06T10:00:{i:02d}Z line {i}\n" for i in range(10))}))
-    assert sum(p == "/_bulk" for _, p in fake.calls) > 1
+    assert len(fake.batches) > 1
     assert len(fake.of("ci-logs-")) == 10
 
 
 @pytest.mark.parametrize("env, error", [
     ({}, "https://"),
-    ({"OPENSEARCH_URL": "http://localhost:9200"}, "https://"),
-    ({"OPENSEARCH_URL": "https://localhost:9200", "OPENSEARCH_CA": "/nonexistent"}, "/nonexistent"),
+    ({"INGEST_URL": "http://example.com/log/ingest"}, "https://"),
+    ({"INGEST_URL": "https://example.com/log/ingest", "INGEST_CA": "/nonexistent"}, "/nonexistent"),
 ])
 def test_connect_refuses_bad_settings(env, error):
     with pytest.raises(ingest.Failure, match=error):
         ingest.connect(env)
 
 
-def test_unreachable_cluster_fails(tmp_path, capsys):
-    request = ingest.connect({"OPENSEARCH_URL": "https://127.0.0.1:1"})
-    assert ingest.main([str(write_bundle(tmp_path / "b"))], request=request) == 1
-    assert "127.0.0.1:1" in capsys.readouterr().err
+def test_unreachable_cluster_fails(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(ingest.time, "sleep", lambda _: None)
+    post = ingest.connect({"INGEST_URL": "https://127.0.0.1:1/log/ingest"})
+    assert ingest.main([str(write_bundle(tmp_path / "b"))], post=post) == 1
+    err = capsys.readouterr().err
+    assert "cannot reach Data Prepper" in err and "127.0.0.1" not in err
 
 
 def test_missing_bundle_fails(tmp_path, capsys):
-    assert ingest.main([str(tmp_path / "nope.tar.zst")], request=FakeOpenSearch()) == 1
+    assert ingest.main([str(tmp_path / "nope.tar.zst")], post=FakeDataPrepper()) == 1
     assert "nope.tar.zst" in capsys.readouterr().err
