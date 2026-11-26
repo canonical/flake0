@@ -14,7 +14,7 @@ s#\b((bearer|basic)[[:space:]]+)[A-Za-z0-9._~+/-]+=*#\1***REDACTED***#Ig
 # quote or separator, so surrounding structure is preserved. A backslash before a
 # quote ends it too, and any other backslash pair stays whole, so a marker line
 # stays valid JSON. A value cannot start with ":", so TestPassword::test_x survives.
-s/((pass(word|wd)?|secret([_-]?key)?|token|api[_-]?key|access[_-]?key)\\?["']?[[:space:]]*[=:][[:space:]]*(\\?["'])?)([^[:space:],;"':\\]|\\[^"'])([^[:space:],;"'\\]|\\[^"'])*/\1***REDACTED***/Ig
+s/((pass(word|wd)?|secret([_-]?key)?|token|api[_-]?key|access[_-]?key|service[_-]?account)\\?["']?[[:space:]]*[=:][[:space:]]*(\\?["'])?)([^[:space:],;"':\\]|\\[^"'])([^[:space:],;"'\\]|\\[^"'])*/\1***REDACTED***/Ig
 
 # Credentials in a URL, like a database relation's postgres://user:pass@host
 s#(://[^:/@[:space:]]+:)[^@/"'[:space:]]+@#\1***REDACTED***@#g

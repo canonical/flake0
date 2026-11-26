@@ -120,6 +120,8 @@ def test_quoted_keys_and_values_are_masked(tmp_path, line, masked):
         ("SECRET_KEY=hunter2", "SECRET_KEY=***REDACTED***"),
         ("t[password=\\\\xe9]", "t[password=***REDACTED***"),
         ("uri=postgres://relation-1:hunter2@10.0.0.1:5432/db", "uri=postgres://relation-1:***REDACTED***@10.0.0.1:5432/db"),
+        ('export GCP_SERVICE_ACCOUNT="ewogICJ0eXBl"', 'export GCP_SERVICE_ACCOUNT="***REDACTED***"'),
+        ("export GCS_SERVICE_ACCOUNT=ewogICJ0eXBl", "export GCS_SERVICE_ACCOUNT=***REDACTED***"),
     ],
 )
 def test_nested_and_s3_forms_are_masked(tmp_path, line, masked):
