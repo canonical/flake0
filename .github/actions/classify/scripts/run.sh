@@ -68,7 +68,7 @@ PROMPT+=" in $REPO. The job is still running, so GitHub doesn't serve its log ye
 
 The working directory holds:
 - bundle/: the job's collect bundle. job.log is the job's own log up to this step, pytest.log
-  the test output, and metrics.ndjson one Telegraf metric per line, every 2 seconds.
+  the test output, and metrics.ndjson one Telegraf metric per line, every 30 seconds.
 - src/: the repository at the tested commit.
 - docs/taxonomy.md: the flake0 taxonomy.
 

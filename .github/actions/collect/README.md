@@ -6,7 +6,7 @@ ran, and uploads it as a workflow artifact — including (especially) when the j
 Integration tests that fail or flake on hosted runners usually leave nothing behind but the test
 log, which cannot tell you that the CPU was starved, memory ran out, inodes filled up, I/O
 stalled past a `wait-for` timeout, or snapd refreshed mid-run. This action records that context
-at 2-second resolution so you can go back and look.
+at 30-second resolution so you can go back and look.
 
 Part of the **Flake0** AI debugging suite for CI tests.
 
@@ -303,9 +303,7 @@ bundle and CI fails if they regress. On a 28-core host with 31 watched processes
 | Disk | ~33 MB per 30 min, ~18x smaller once packed | — |
 
 Expect less on a smaller runner: cost scales with core count and with the number of matched
-processes. Expensive `/proc` walks are sampled at 10 s and 30 s rather than 2 s precisely to keep
-this in range — see [`docs/plan.md` §7](docs/plan.md) for the per-input cost table and the
-reasoning.
+processes. See [`docs/plan.md` §7](docs/plan.md) for the per-input cost table and the reasoning.
 
 ## Notes
 

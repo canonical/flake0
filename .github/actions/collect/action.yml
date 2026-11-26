@@ -1,7 +1,7 @@
 name: collect
 description: >-
   Lightweight host telemetry for CI runners. Part of the Flake0 AI debugging suite.
-  'start' begins Telegraf host metrics collection (2s interval); 'stop' flushes,
+  'start' begins Telegraf host metrics collection (30s interval); 'stop' flushes,
   bundles and uploads a workflow artifact for post-mortem analysis of failing/flaky tests.
 author: canonical
 branding:
