@@ -38,6 +38,8 @@ RUN_TAGS = {
 }
 METRICS = re.compile(r"metrics[^/]*\.json")  # Telegraf rotates to metrics.<time>-<n>.json
 JUJU_STATUS = re.compile(r"juju-status-[^/]*\.ndjson")
+LABELLED = ("ci-logs-", "ci-metrics-", "ci-juju-status-")
+UNLABELLED = ("ci-logs-pytest-", "ci-logs-job-")
 # Each log format's prefix, parsed into fields. `message` keeps what follows.
 JUJU_LINE = re.compile(r"(\S+): \S+ \S+ (\S+) (\S+) ?(.*)")  # entity: date time LEVEL module
 CRI = re.compile(r"\S+ (stdout|stderr) [FP](?: |$)")  # time stream tag, from the kubelet
@@ -277,6 +279,19 @@ def log_docs(files, bundle_id, tags, fallback_month, skip_steps=()):
             yield f"{index}-{month(ts) if ts else fallback_month}", doc_id(bundle_id, rel, *key, seen[key]), doc
 
 
+def label(docs, tests):
+    """Adds the test that was running to each timed log, metric and status document."""
+    windows = [d for index, _, d in tests if index == "ci-tests"]
+    for index, id_, doc in docs:
+        ts = doc.get("@timestamp")
+        if ts and index.startswith(LABELLED) and not index.startswith(UNLABELLED):
+            for test in windows:
+                if test["@timestamp"] <= ts <= (test["end"] or ts):
+                    doc["test"] = {k: test[k] for k in ("nodeid", "name", "attempt", "outcome")}
+                    break
+        yield index, id_, doc
+
+
 def meta_docs(files, bundle_id, tags, env_start, env_end):
     start, end = (env_start or {}).get("ts"), (env_end or {}).get("ts")
     run = {"type": "run", "bundle_id": bundle_id, "tag": tags, "end": end,
@@ -449,13 +464,14 @@ def main(argv, post=None):
             start = (env_start or {}).get("ts")
             bundle_id = doc_id(tags["run_id"], tags["run_attempt"], tags["job"], tags["runner_name"], start)
             fallback_month = month(start or iso(datetime.now(timezone.utc), "0"))
-            total = bulk(post, chain(
+            meta = list(meta_docs(files, bundle_id, tags, env_start, env_end))
+            total = bulk(post, label(chain(
                 juju_status_docs(files, bundle_id, tags),
                 metric_docs(files, bundle_id, tags),
                 log_docs(files, bundle_id, tags, fallback_month, skip_steps),
-                meta_docs(files, bundle_id, tags, env_start, env_end),
+                meta,
                 verdict_docs(verdict_path, bundle_id, tags, start),
-            ))
+            ), meta))
     except (Failure, OSError) as e:
         warn(str(e))
         return 1

@@ -41,6 +41,22 @@
         },
         "bundle_id": {
           "type": "keyword"
+        },
+        "test": {
+          "properties": {
+            "nodeid": {
+              "type": "keyword"
+            },
+            "name": {
+              "type": "keyword"
+            },
+            "attempt": {
+              "type": "integer"
+            },
+            "outcome": {
+              "type": "keyword"
+            }
+          }
         }
       }
     }

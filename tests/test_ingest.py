@@ -347,6 +347,20 @@ def test_meta_docs(tmp_path):
     ]
 
 
+def test_docs_labelled_with_the_running_test(tmp_path):
+    logs = {"kernel.log": "2026-11-06T10:00:02Z a\n2026-11-06T10:00:05.500Z b\n2026-11-06T10:00:06.500Z c\n",
+            "job.log": "2026-11-06T10:00:02.0000000Z d\n"}
+    fake = load(write_bundle(tmp_path / "b", logs=logs, markers=[
+        {"ts": "2026-11-06T10:00:00.000Z", "event": "start", "nodeid": "t.py::a"},
+        {"ts": "2026-11-06T10:00:05.000Z", "event": "finish", "nodeid": "t.py::a", "outcome": "failed", "duration": 5.0},
+        {"ts": "2026-11-06T10:00:06.000Z", "event": "start", "nodeid": "t.py::b"},
+        {"ts": "2026-11-06T10:00:07.000Z", "event": "finish", "nodeid": "t.py::b", "outcome": "passed", "duration": 1.0},
+    ]))
+    assert {d["message"]: d.get("test", {}).get("name") for d in fake.of("ci-logs-host")} == {"a": "a", "b": None, "c": "b"}
+    assert fake.of("ci-metrics")[0]["test"] == {"nodeid": "t.py::a", "name": "a", "attempt": 1, "outcome": "failed"}
+    assert all("test" not in d for d in fake.of("ci-logs-job") + fake.of("ci-tests") + fake.of("ci-meta"))
+
+
 def test_job_identity_on_every_doc(tmp_path):
     job_log = "2026-11-06T10:00:00.0000000Z Complete job name: it (lxd)\n"
     fake = load(write_bundle(tmp_path / "b", logs={"job.log": job_log}))
