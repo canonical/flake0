@@ -75,6 +75,32 @@ def test_outcomes(run, markers):
     }
 
 
+def test_xfail_outcomes(run, markers, pytester):
+    pytester.makepyfile(
+        test_inner="""
+        import pytest
+
+        @pytest.fixture
+        def aborted():
+            pytest.xfail("aborted")
+
+        @pytest.mark.xfail
+        def test_known_bug():
+            assert False
+
+        @pytest.mark.xfail
+        def test_fixed_bug():
+            pass
+
+        def test_after_abort(aborted):
+            pass
+        """
+    )
+    run()
+    outcomes = {r["nodeid"].split("::")[1]: r["outcome"] for r in lines(markers) if r["event"] == "finish"}
+    assert outcomes == {"test_known_bug": "xfailed", "test_fixed_bug": "xpassed", "test_after_abort": "xfailed"}
+
+
 def test_failure_text(run, markers):
     run()
     finish = {r["nodeid"].split("::")[1]: r for r in lines(markers) if r["event"] == "finish"}

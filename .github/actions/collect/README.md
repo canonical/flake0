@@ -221,7 +221,7 @@ masks them in its own log, and the [Redaction](#redaction) rules run on top.
 {"ts":"2026-11-06T10:00:12.456Z","event":"finish","nodeid":"tests/integration/test_x.py::test_y","outcome":"failed","duration":12.3,"failure":"...\nE       assert 1 == 2\n\ntests/integration/test_x.py:42: AssertionError"}
 ```
 
-`outcome` is `passed`, `skipped`, `failed`, or `error` when setup or teardown failed. A `failed` or
+`outcome` is `passed`, `skipped`, `xfailed`, `xpassed`, `failed`, or `error` when setup or teardown failed. A `failed` or
 `error` finish line also has `failure`: the last 4,000 characters of pytest's report for the first phase that
 failed, where the exception and the assertion are. An attempt that
 `pytest-rerunfailures` retries counts as failed, and each attempt gets its own pair of lines.

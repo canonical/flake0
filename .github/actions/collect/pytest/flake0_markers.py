@@ -10,7 +10,7 @@ import re
 from datetime import datetime, timezone
 
 PATH = os.environ.get("FLAKE0_MARKERS")
-SEVERITY = ["passed", "skipped", "failed", "error"]
+SEVERITY = ["passed", "xpassed", "skipped", "xfailed", "failed", "error"]
 FAILURE_CHARS = 4000  # the end of a traceback, where the exception and the assertion are
 # redact.sed's private-key pattern. Masked here, because sed's multi-line rule masks from a key
 # header with no footer to the end of markers.ndjson, and a JSON line has no footer line.
@@ -35,6 +35,8 @@ def write(event, nodeid, **fields):
 
 
 def phase_outcome(report):
+    if hasattr(report, "wasxfail"):
+        return "xfailed" if report.skipped else "xpassed"
     if report.outcome in ("passed", "skipped"):
         return report.outcome
     # Also covers retry plugins, which report their own outcome for a failed attempt.
