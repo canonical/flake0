@@ -19,8 +19,7 @@ permissions:
 steps:
   # ...
   - name: Run tests
-    shell: bash  # adds pipefail, so the step keeps the test's exit code
-    run: tox -e integration 2>&1 | tee "$RUNNER_TEMP/test.log"
+    run: tox -e integration
   - name: Stop telemetry
     id: collect
     if: always()

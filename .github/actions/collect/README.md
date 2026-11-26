@@ -277,16 +277,16 @@ jq -r '.metrics[]|select(.name=="disk")|"\(.tags.path) \(.fields.inodes_free)"' 
 ## Overhead
 
 Measured on every run, by having Telegraf watch its own process; the numbers travel inside the
-bundle and CI fails if they regress. On a 28-core host with 31 watched processes:
+bundle and CI fails if they regress. On a 4-core host with 53 watched processes:
 
 | | Measured | CI gate |
 |---|---|---|
-| CPU | 2.5% of one core (0.09% of the machine) | ≤ 10% of one core |
-| Memory | 44 MB private (63 MB Go `sys_bytes`) | ≤ 150 MB `sys_bytes` |
-| Disk | ~33 MB per 30 min, ~18x smaller once packed | — |
+| CPU | 0.9% of one core | ≤ 10% of one core |
+| Memory | 56 MB Go `sys_bytes` | ≤ 150 MB `sys_bytes` |
+| Disk | ~5.4 MB per 30 min, ~14x smaller once packed | — |
 
 Expect less on a smaller runner: cost scales with core count and with the number of matched
-processes. See [`docs/plan.md` §7](docs/plan.md) for the per-input cost table and the reasoning.
+processes.
 
 ## Notes
 

@@ -32,7 +32,7 @@ On your machine, the same script takes an archive or an extracted bundle. Settin
 environment, so the password never shows in the process list. It exits non-zero on failure:
 
 ```bash
-gh run download <run-id> -n flake0-collect-<run-id>-1-<job>
+gh run download <run-id> -n <artifact-name>
 export INGEST_URL=https://data-prepper.example.com/log/ingest INGEST_USER=flake0
 read -rs INGEST_PASSWORD && export INGEST_PASSWORD
 export INGEST_CA=~/opensearch-ca.pem   # only for a private CA
