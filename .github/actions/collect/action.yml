@@ -44,7 +44,7 @@ inputs:
   logs:
     description: >-
       Follow Juju, workload, kernel and snapd logs and the job log. 'false' skips them.
-      pytest.log comes only from test-log, and test markers only from markers.
+      Test markers come only from markers.
     required: false
     default: "true"
   redact-values:
@@ -62,12 +62,6 @@ inputs:
       needs to keep the existing value, or pytest stops at startup.
     required: false
     default: "false"
-  test-log:
-    description: >-
-      Stop phase. Path to the job's test output, e.g. from `2>&1 | tee`. Copied
-      into the bundle as pytest.log and redacted like the other logs.
-    required: false
-    default: ""
   cache-telegraf:
     description: >-
       Cache the Telegraf binary between jobs. Avoids an ~82 MB download from
@@ -146,7 +140,6 @@ runs:
         FLAKE0_COLLECT_DIR: ${{ inputs.collect-dir }}
         BUNDLE_PATH: ${{ runner.temp }}/flake0-bundle.tar.zst
         FLAKE0_REDACT_VALUES: ${{ inputs.redact-values }}
-        FLAKE0_TEST_LOG: ${{ inputs.test-log }}
       run: "$GITHUB_ACTION_PATH/scripts/stop.sh"
 
     # Path comes from the stop step rather than being restated here: the bundle

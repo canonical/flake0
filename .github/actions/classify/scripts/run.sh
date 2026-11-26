@@ -67,8 +67,8 @@ PROMPT="Job \"${JOB_NAME:-}\" of $RUN_URL failed, at commit ${GITHUB_SHA:-unknow
 PROMPT+=" in $REPO. The job is still running, so GitHub doesn't serve its log yet.
 
 The working directory holds:
-- bundle/: the job's collect bundle. job.log is the job's own log up to this step, pytest.log
-  the test output, and metrics.ndjson one Telegraf metric per line, every 30 seconds.
+- bundle/: the job's collect bundle. job.log is the job's own log up to this step, test output
+  included, and metrics.ndjson one Telegraf metric per line, every 30 seconds.
 - src/: the repository at the tested commit.
 - docs/taxonomy.md: the flake0 taxonomy.
 

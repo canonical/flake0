@@ -72,13 +72,12 @@ def test_markers_input_adds_to_the_jobs_values(start, tmp_path):
     ]
 
 
-def test_test_log_is_redacted(tmp_path):
+def test_job_log_is_redacted(tmp_path):
     collect = tmp_path / "collect"
     collect.mkdir()
-    log = tmp_path / "test.log"
-    log.write_text("password=hunter2\n")
-    run_stop(collect, tmp_path, FLAKE0_TEST_LOG=str(log))
-    assert "hunter2" not in (collect / "pytest.log").read_text()
+    (collect / "job.log").write_text("password=hunter2\n")
+    run_stop(collect, tmp_path)
+    assert "hunter2" not in (collect / "job.log").read_text()
 
 
 def test_nodeids_in_markers_are_redacted(tmp_path):

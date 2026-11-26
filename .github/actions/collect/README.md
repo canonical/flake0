@@ -37,10 +37,9 @@ exits 0.
 | `artifact-name` | `flake0-collect-<run_id>-<attempt>-<job>` | Name of the uploaded artifact. Set it in a matrix, because the default repeats across legs and `upload-artifact` rejects duplicates. `stop` reuses the name given at `start`. |
 | `retention-days` | `14` | Artifact retention |
 | `collect-dir` | `$RUNNER_TEMP/flake0-collect` | Collection directory |
-| `logs` | `true` | Follow Juju, workload, kernel and snapd logs and the job log. `false` skips them. `pytest.log` comes only from `test-log`, and test markers only from `markers`. |
+| `logs` | `true` | Follow Juju, workload, kernel and snapd logs and the job log. `false` skips them. Test markers come only from `markers`. |
 | `redact-values` | `""` | Path to a file of secret values (one per line) to mask in collected logs before bundling. See [Workload logs](#workload-logs). |
 | `markers` | `false` | `start` only. Load the test markers pytest plugin in later steps. See [Test output and markers](#test-output-and-markers). |
-| `test-log` | `""` | `stop` only. Path to the job's test output, copied into the bundle as `pytest.log`. See [Test output and markers](#test-output-and-markers). |
 | `cache-telegraf` | `true` | Cache the binary between jobs, avoiding an ~82 MB download per run |
 
 ## Outputs
@@ -70,7 +69,6 @@ A `tar.zst` artifact containing:
 | `snapd.log` | New lines of snapd's journal. Needs root or passwordless `sudo` |
 | `host-watcher.log` | Errors from the two followers above, usually empty |
 | `env-start.json`, `env-end.json` | Kernel version, snaps and snapd changes at `start` and `stop` |
-| `pytest.log` | The file named by `test-log`, when set |
 | `job.log` | The job's own log, from Set up job up to the `stop` step. See [Job log](#job-log) |
 | `markers.ndjson` | One start and one finish line per test, with `markers: true` |
 
@@ -124,7 +122,7 @@ top, after a new marker.
 Pod output and container journals land in the artifact, so anything a workload prints could become
 readable by anyone who can read the repo. Before bundling, `stop` masks secrets in every collected
 log (see [Redaction](#redaction)), but this is best-effort. When logs may carry sensitive data you
-cannot enumerate, set `logs: false` and leave `test-log` and `markers` unset.
+cannot enumerate, set `logs: false` and leave `markers` unset.
 
 #### Redaction
 
@@ -199,20 +197,6 @@ If they change, `job.log` is missing and `stop` prints a warning. Secrets are ma
 masks them in its own log, and the [Redaction](#redaction) rules run on top.
 
 ### Test output and markers
-
-`stop` copies the file named by `test-log` into the bundle as `pytest.log` and redacts it. Use
-`shell: bash`, which sets `pipefail`, so `tee` keeps the test exit code:
-
-```yaml
-- shell: bash
-  run: pytest tests/integration 2>&1 | tee "$RUNNER_TEMP/test.log"
-
-- uses: canonical/flake0/.github/actions/collect@main
-  if: always()
-  with:
-    phase: stop
-    test-log: ${{ runner.temp }}/test.log
-```
 
 `markers.ndjson` records when each test started and finished, so you can match log lines to a test:
 

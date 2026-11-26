@@ -39,7 +39,7 @@ RUN_TAGS = {
 METRICS = re.compile(r"metrics[^/]*\.json")  # Telegraf rotates to metrics.<time>-<n>.json
 JUJU_STATUS = re.compile(r"juju-status-[^/]*\.ndjson")
 LABELLED = ("ci-logs-", "ci-metrics-", "ci-juju-status-")
-UNLABELLED = ("ci-logs-pytest-", "ci-logs-job-")
+UNLABELLED = ("ci-logs-job-",)
 # Each log format's prefix, parsed into fields. `message` keeps what follows.
 JUJU_LINE = re.compile(r"(\S+): \S+ \S+ (\S+) (\S+) ?(.*)")  # entity: date time LEVEL module
 CRI = re.compile(r"\S+ (stdout|stderr) [FP](?: |$)")  # time stream tag, from the kubelet
@@ -200,7 +200,7 @@ def log_source(rel):
         return "k8s"
     if rel.startswith("workload/lxd/"):
         return "lxd" if rel.endswith("/journal.log") else "app"
-    return {"kernel.log": "host", "snapd.log": "host", "job.log": "job", "pytest.log": "pytest"}.get(rel, "flake0")
+    return {"kernel.log": "host", "snapd.log": "host", "job.log": "job"}.get(rel, "flake0")
 
 
 def path_fields(rel):

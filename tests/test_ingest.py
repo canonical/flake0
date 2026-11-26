@@ -156,7 +156,6 @@ def test_reload_overwrites_and_does_not_duplicate(tmp_path):
 def test_log_docs(tmp_path):
     fake = load(write_bundle(tmp_path / "b", logs={
         "kernel.log": "2026-11-06T10:00:01,000000+00:00 Out of memory\n\n continuation\n",
-        "pytest.log": "collected 2 items\nFAILED test_x\n",
     }))
     kernel = sorted((d for d in fake.of("ci-logs-") if d["file"] == "kernel.log"), key=lambda d: d["line"])
     assert [(d["line"], d["message"], d["@timestamp"]) for d in kernel] == [
@@ -164,9 +163,6 @@ def test_log_docs(tmp_path):
         (3, " continuation", "2026-11-06T10:00:01.000Z"),
     ]
     assert kernel[0]["tag"] == TAGS
-    pytest_docs = [d for d in fake.of("ci-logs-pytest-2026.11")]
-    assert len(pytest_docs) == 2
-    assert all("@timestamp" not in d for d in pytest_docs)
 
 
 def test_cri_prefix_stripped(tmp_path):
@@ -451,7 +447,7 @@ def test_logs_split_by_source(tmp_path):
     sources = {
         "juju-debug-root-lxd-testing.log": "juju", "workload/k8s/valkey-0_testing_charm-1.log": "k8s",
         "workload/lxd/c1/journal.log": "lxd", "workload/lxd/c1/valkey-charmed_valkey_valkey.log": "app",
-        "kernel.log": "host", "snapd.log": "host", "job.log": "job", "pytest.log": "pytest",
+        "kernel.log": "host", "snapd.log": "host", "job.log": "job",
         "telegraf.log": None, "watcher.log": None, "workload-watcher.log": None,
     }
     fake = load(write_bundle(tmp_path / "b", logs={rel: "2026-11-06T10:00:01Z x\n" for rel in sources}))

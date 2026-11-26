@@ -115,10 +115,6 @@ if [ -d "$PAGES" ]; then
   fi
 fi
 
-if [ -n "${FLAKE0_TEST_LOG:-}" ] && ! cp -- "$FLAKE0_TEST_LOG" "$FLAKE0_COLLECT_DIR/pytest.log" 2>/dev/null; then
-  echo "flake0-collect: warning: test-log not readable: $FLAKE0_TEST_LOG" >&2
-fi
-
 # Root's pytest writes this inside spread, and a reused runner could not delete it.
 "${SUDO[@]}" rm -rf "$(dirname "${BASH_SOURCE[0]}")/../pytest/__pycache__"
 

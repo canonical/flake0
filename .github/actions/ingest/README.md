@@ -82,7 +82,6 @@ own fields out of the line:
 | `app` | the other files under `workload/lxd/`, the snaps' own log files | `container`, `snap`, `log` (from the path) |
 | `host` | `kernel.log`, `snapd.log` | snapd lines: `host`, `process`, `pid` |
 | `job` | `job.log` | `step`, from the last `##[group]Run <step>` line |
-| `pytest` | `pytest.log` | none |
 
 Every document carries `bundle_id`, which tells matrix legs and repeated jobs apart. Logs, meta and
 Juju status documents also carry the run tags as `tag.run_id`, `tag.repo`, `tag.job` and so on, the same field
@@ -97,9 +96,8 @@ they come from the job's `GITHUB_*` variables, or are `local`.
 - **Logs** have `file`, `line`, `message`, `@timestamp` and their source's fields. `message` holds
   what follows the parsed prefix: `boom` for `unit-valkey-0: 2026-11-06 10:00:01.000 ERROR
   unit.valkey/0.juju-log boom`. A line without a time of its own, such as a traceback line, takes
-  the time and fields of the line before it, so `level: ERROR` finds the whole traceback. A line with no time before it, such as
-  most of `pytest.log`, has no `@timestamp` and doesn't show up in time-filtered views. Search those
-  by `bundle_id`.
+  the time and fields of the line before it, so `level: ERROR` finds the whole traceback. A line with no time before it has no
+  `@timestamp` and doesn't show up in time-filtered views. Search those by `bundle_id`.
 - **Meta** has one `type: run` document per bundle, with `env_start` and `env_end`. Snap lists and
   snapd changes are stored but not searchable.
 - **Tests** has one document per test attempt, with `nodeid`, `name` (the part after the last `::`),
@@ -201,7 +199,6 @@ done
 - Lines of a multi-line log entry are separate documents. Search finds each line, and sorting by
   `line` shows them in order.
 - A Kubernetes line split into partial (`P`) records stays split.
-- `pytest.log` lines usually have no time. Use the test documents for timing.
 - In `job.log`, the `step` of a `run:` step is the first line of its script, such as `set -x`, not
   the step's `name:`. The raw job log only has `##[group]Run <first line>`. A `uses:` step shows
   the action, such as `actions/checkout@<sha>`.

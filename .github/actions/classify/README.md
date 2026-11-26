@@ -27,7 +27,6 @@ steps:
     uses: canonical/flake0/.github/actions/collect@main
     with:
       phase: stop
-      test-log: ${{ runner.temp }}/test.log
   - name: Classify failure
     if: failure()
     timeout-minutes: 25
