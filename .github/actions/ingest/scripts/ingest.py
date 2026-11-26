@@ -30,6 +30,7 @@ from itertools import chain
 BATCH_BYTES = 5 * 1024 * 1024
 BATCH_EVENTS = 5000
 BUSY = (408, 429, 502, 503, 504)
+RETRY_TIMEOUT = 600
 # The global tags telegraf.conf puts on every metric, and where start.sh read them.
 RUN_TAGS = {
     "run_id": "GITHUB_RUN_ID", "run_attempt": "GITHUB_RUN_ATTEMPT", "repo": "GITHUB_REPOSITORY",
@@ -409,9 +410,11 @@ def connect(env):
     return post
 
 
-def send(post, entries):
+def send(post, entries, deadline):
     body = b"[" + b",".join(entries) + b"]"
-    for wait in (5, 15, 30, *[60] * 14, None):
+    for wait in (5, 10, 30, *[60] * 3, None):
+        if wait and time.monotonic() + wait > deadline:
+            wait = None
         try:
             status, reply = post(body)
         except Failure:
@@ -427,16 +430,17 @@ def send(post, entries):
 
 def bulk(post, docs):
     batch, size, total = [], 0, 0
+    deadline = time.monotonic() + RETRY_TIMEOUT
     for index, id_, doc in docs:
         entry = json.dumps({"index": index, "id": id_, "doc": doc}, separators=(",", ":")).encode()
         if batch and (size + len(entry) > BATCH_BYTES or len(batch) >= BATCH_EVENTS):
-            send(post, batch)
+            send(post, batch, deadline)
             total += len(batch)
             batch, size = [], 0
         batch.append(entry)
         size += len(entry)
     if batch:
-        send(post, batch)
+        send(post, batch, deadline)
         total += len(batch)
     return total
 
