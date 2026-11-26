@@ -6,6 +6,9 @@
     "ci-logs-common"
   ],
   "template": {
+    "settings": {
+      "number_of_shards": 3
+    },
     "mappings": {
       "properties": {
         "step": {
