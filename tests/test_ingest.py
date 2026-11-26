@@ -17,6 +17,7 @@ _spec.loader.exec_module(ingest)
 TAGS = {
     "run_id": "42", "run_attempt": "1", "repo": "canonical/x", "workflow": "ci", "job": "it",
     "sha": "abc", "ref": "main", "runner_name": "r1", "runner_os": "Linux", "image_os": "ubuntu24",
+    "arch": "amd64",
 }
 
 
@@ -344,6 +345,12 @@ def test_meta_docs(tmp_path):
         ("t.py::flaky", 2, "passed", "2026-11-06T10:00:06.000Z", "2026-11-06T10:00:07.000Z"),
         ("t.py::hung", 1, "unfinished", "2026-11-06T10:00:08.000Z", "2026-11-06T10:30:00.000Z"),
     ]
+
+
+def test_job_identity_on_every_doc(tmp_path):
+    job_log = "2026-11-06T10:00:00.0000000Z Complete job name: it (lxd)\n"
+    fake = load(write_bundle(tmp_path / "b", logs={"job.log": job_log}))
+    assert {d["tag"]["job_name"] for d in fake.docs.values()} == {"it (lxd)"}
 
 
 def juju_status(ts, workload, message):

@@ -44,6 +44,12 @@
             },
             "image_os": {
               "type": "keyword"
+            },
+            "arch": {
+              "type": "keyword"
+            },
+            "job_name": {
+              "type": "keyword"
             }
           }
         },

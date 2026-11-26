@@ -34,7 +34,7 @@ BUSY = (408, 429, 502, 503)
 RUN_TAGS = {
     "run_id": "GITHUB_RUN_ID", "run_attempt": "GITHUB_RUN_ATTEMPT", "repo": "GITHUB_REPOSITORY",
     "workflow": "GITHUB_WORKFLOW", "job": "GITHUB_JOB", "sha": "GITHUB_SHA", "ref": "GITHUB_REF_NAME",
-    "runner_name": "RUNNER_NAME", "runner_os": "RUNNER_OS", "image_os": "ImageOS",
+    "runner_name": "RUNNER_NAME", "runner_os": "RUNNER_OS", "image_os": "ImageOS", "arch": "FLAKE0_ARCH",
 }
 METRICS = re.compile(r"metrics[^/]*\.json")  # Telegraf rotates to metrics.<time>-<n>.json
 JUJU_STATUS = re.compile(r"juju-status-[^/]*\.ndjson")
@@ -156,19 +156,28 @@ def run_tags(files):
     return env
 
 
-def metric_doc(m, bundle_id):
+def job_name(files):
+    """The job's display name, from the runner's job log."""
+    if "job.log" in files:
+        for _, line in lines(files, "job.log"):
+            if "Complete job name: " in line:
+                return line.split("Complete job name: ", 1)[1].strip()
+    return None
+
+
+def metric_doc(m, bundle_id, tags):
     ts = from_ms(m["timestamp"])
     # The shape Telegraf's outputs.opensearch writes, so live streaming can share the indices.
-    return ts, {"@timestamp": ts, "measurement_name": m["name"], "tag": m["tags"],
+    return ts, {"@timestamp": ts, "measurement_name": m["name"], "tag": {**tags, **m["tags"]},
                 m["name"]: m["fields"], "bundle_id": bundle_id}
 
 
-def metric_docs(files, bundle_id):
+def metric_docs(files, bundle_id, tags):
     for rel in filter(METRICS.fullmatch, files):
         bad = 0
         for n, batch in json_lines(files, rel):
             try:
-                docs = [metric_doc(m, bundle_id) for m in batch["metrics"]]
+                docs = [metric_doc(m, bundle_id, tags) for m in batch["metrics"]]
             except (KeyError, TypeError, ValueError, OSError, OverflowError):
                 bad += 1
                 continue
@@ -431,13 +440,15 @@ def main(argv, post=None):
                 root = tmp
             files = regular_files(root, skip_files)
             tags = run_tags(files)
+            if job := job_name(files):
+                tags["job_name"] = job
             env_start, env_end = read_json(files, "env-start.json"), read_json(files, "env-end.json")
             start = (env_start or {}).get("ts")
             bundle_id = doc_id(tags["run_id"], tags["run_attempt"], tags["job"], tags["runner_name"], start)
             fallback_month = month(start or iso(datetime.now(timezone.utc), "0"))
             total = bulk(post, chain(
                 juju_status_docs(files, bundle_id, tags),
-                metric_docs(files, bundle_id),
+                metric_docs(files, bundle_id, tags),
                 log_docs(files, bundle_id, tags, fallback_month, skip_steps),
                 meta_docs(files, bundle_id, tags, env_start, env_end),
                 verdict_docs(verdict_path, bundle_id, tags, start),

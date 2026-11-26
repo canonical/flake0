@@ -82,7 +82,7 @@ pytest, Telegraf itself, and the log watchers with their `juju`, `lxc` and `dmes
 the `journalctl` that follows snapd, and the `journalctl` they start inside LXD containers.
 
 Every metric carries `run_id`, `run_attempt`, `repo`, `workflow`, `job`, `sha`, `ref`,
-`runner_name`, `runner_os` and `image_os`, so you can pull up one run or diff a good run against
+`runner_name`, `runner_os`, `image_os` and `arch`, so you can pull up one run or diff a good run against
 a flaky one.
 
 ### Juju logs
