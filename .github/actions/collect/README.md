@@ -78,7 +78,7 @@ Collected: `cpu` (per-core, incl. `usage_steal`), `mem`, `swap`, `pressure` (PSI
 stall time, the highest-signal metric here), `disk` (bytes **and inodes**), `diskio`, `net`,
 `netstat`, `nstat`, `processes`, `kernel`, `linux_sysctl_fs`, `conntrack` (when the module is
 loaded), and `procstat` for jujud, containerd, dockerd, lxd, snapd, kubelet, pebble, mongod,
-pytest, Telegraf itself, and the log watchers with their `juju`, `lxc`, `tail` and `dmesg` processes,
+pytest, Telegraf itself, and the log watchers with their `juju`, `lxc` and `dmesg` processes,
 the `journalctl` that follows snapd, and the `journalctl` they start inside LXD containers.
 
 Every metric carries `run_id`, `run_attempt`, `repo`, `workflow`, `job`, `sha`, `ref`,
@@ -167,8 +167,7 @@ measured by procstat on the K8s legs of `consumer-sim`, which followed 31 files,
 | `ubuntu-26.04-arm` | uutils 0.10.0 | about 3.9 MB | 122 MB |
 
 Each LXD container adds an `lxc exec` client of about 22 MB RSS for its journal. An LXD run follows
-2 or 3 containers and a few snap log files. Every run reports these numbers in `metrics.json`,
-because procstat watches the watchers and their followers.
+2 or 3 containers and a few snap log files.
 
 ### Kernel, snapd and environment
 
