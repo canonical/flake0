@@ -43,6 +43,23 @@ dashboard PNG straight from a `collect` bundle, with zero configuration:
 
 See [`.github/actions/plot/README.md`](.github/actions/plot/README.md) for details.
 
+The `ingest` action (`.github/actions/ingest`) loads a `collect` bundle into OpenSearch 2.x via
+Data Prepper, so metrics, logs and test results from many runs can be searched together. The same
+script runs on your machine against a downloaded bundle:
+
+```yaml
+- name: Load into OpenSearch
+  if: always()
+  uses: canonical/flake0/.github/actions/ingest@main
+  with:
+    bundle-path: ${{ steps.collect.outputs.bundle-path }}
+    url: ${{ secrets.FLAKE0_INGEST_URL }}
+    username: ${{ secrets.FLAKE0_INGEST_USER }}
+    password: ${{ secrets.FLAKE0_INGEST_PASSWORD }}
+```
+
+See [`.github/actions/ingest/README.md`](.github/actions/ingest/README.md) for details.
+
 The `classify` action (`.github/actions/classify`) runs an [opencode](https://opencode.ai) agent
 over a failed job's `collect` bundle and source, and tells whether it failed from flakiness or a
 real bug. Add it as the last step of the test job:
@@ -54,7 +71,6 @@ real bug. Add it as the last step of the test job:
   uses: canonical/flake0/.github/actions/collect@main
   with:
     phase: stop
-    test-log: ${{ runner.temp }}/test.log
 - name: Classify failure
   if: failure()
   timeout-minutes: 25

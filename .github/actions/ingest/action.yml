@@ -1,0 +1,61 @@
+name: ingest
+description: >-
+  Loads a flake0 collect bundle into OpenSearch 2.x via Data Prepper: metrics, logs, run and test
+  metadata.
+author: canonical
+branding:
+  icon: upload-cloud
+  color: orange
+
+inputs:
+  bundle-path:
+    description: "Path to a collect bundle archive (tar.zst or tar.gz), e.g. the collect stop output"
+    required: true
+  url:
+    description: "Data Prepper URL"
+    required: false
+    default: ""
+  username:
+    description: "Data Prepper user"
+    required: false
+    default: ""
+  password:
+    description: "Data Prepper password"
+    required: false
+    default: ""
+  skip-steps:
+    description: "Job steps not to load, one per line"
+    required: false
+    default: ""
+  skip-files:
+    description: "Bundle files not to load, one glob per line"
+    required: false
+    default: ""
+  verdict-path:
+    description: "The classify step's verdict output path."
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Skip without a cluster
+      if: ${{ inputs.url == '' }}
+      shell: bash
+      run: |
+        echo "::notice::flake0-ingest: no url given, not loading the bundle"
+
+    - name: Load bundle
+      if: ${{ inputs.url != '' }}
+      shell: bash
+      env:
+        BUNDLE_PATH: ${{ inputs.bundle-path }}
+        INGEST_URL: ${{ inputs.url }}
+        INGEST_USER: ${{ inputs.username }}
+        INGEST_PASSWORD: ${{ inputs.password }}
+        INGEST_SKIP_STEPS: ${{ inputs.skip-steps }}
+        INGEST_SKIP_FILES: ${{ inputs.skip-files }}
+        INGEST_VERDICT_PATH: ${{ inputs.verdict-path }}
+      run: |
+        python3 "$GITHUB_ACTION_PATH/scripts/ingest.py" "$BUNDLE_PATH" \
+          || echo "::warning::flake0-ingest: the bundle was not loaded, see the log above"

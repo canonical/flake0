@@ -69,6 +69,7 @@ case "$(uname -m)" in
   aarch64) ARCH="arm64"; PINNED_SHA256="7626df978e86b4788aed477f7acb4528ff517b506c721f1bd4c9ac77464a93e5" ;;
   *) echo "flake0-collect: unsupported arch $(uname -m) (linux x86_64/aarch64 only)" >&2; exit 1 ;;
 esac
+TELEGRAF_ENV+=("FLAKE0_ARCH=${ARCH}")
 
 TARBALL_NAME="telegraf-${TELEGRAF_VERSION}_linux_${ARCH}.tar.gz"
 BASE_URL="https://dl.influxdata.com/telegraf/releases"

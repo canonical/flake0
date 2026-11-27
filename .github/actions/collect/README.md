@@ -6,7 +6,7 @@ ran, and uploads it as a workflow artifact — including (especially) when the j
 Integration tests that fail or flake on hosted runners usually leave nothing behind but the test
 log, which cannot tell you that the CPU was starved, memory ran out, inodes filled up, I/O
 stalled past a `wait-for` timeout, or snapd refreshed mid-run. This action records that context
-at 2-second resolution so you can go back and look.
+at 30-second resolution so you can go back and look.
 
 Part of the **Flake0** AI debugging suite for CI tests.
 
@@ -37,10 +37,9 @@ exits 0.
 | `artifact-name` | `flake0-collect-<run_id>-<attempt>-<job>` | Name of the uploaded artifact. Set it in a matrix, because the default repeats across legs and `upload-artifact` rejects duplicates. `stop` reuses the name given at `start`. |
 | `retention-days` | `14` | Artifact retention |
 | `collect-dir` | `$RUNNER_TEMP/flake0-collect` | Collection directory |
-| `logs` | `true` | Follow Juju, workload, kernel and snapd logs and the job log. `false` skips them. `pytest.log` comes only from `test-log`, and test markers only from `markers`. |
+| `logs` | `true` | Follow Juju, workload, kernel and snapd logs and the job log. `false` skips them. Test markers come only from `markers`. |
 | `redact-values` | `""` | Path to a file of secret values (one per line) to mask in collected logs before bundling. See [Workload logs](#workload-logs). |
 | `markers` | `false` | `start` only. Load the test markers pytest plugin in later steps. See [Test output and markers](#test-output-and-markers). |
-| `test-log` | `""` | `stop` only. Path to the job's test output, copied into the bundle as `pytest.log`. See [Test output and markers](#test-output-and-markers). |
 | `cache-telegraf` | `true` | Cache the binary between jobs, avoiding an ~82 MB download per run |
 
 ## Outputs
@@ -70,7 +69,6 @@ A `tar.zst` artifact containing:
 | `snapd.log` | New lines of snapd's journal. Needs root or passwordless `sudo` |
 | `host-watcher.log` | Errors from the two followers above, usually empty |
 | `env-start.json`, `env-end.json` | Kernel version, snaps and snapd changes at `start` and `stop` |
-| `pytest.log` | The file named by `test-log`, when set |
 | `job.log` | The job's own log, from Set up job up to the `stop` step. See [Job log](#job-log) |
 | `markers.ndjson` | One start and one finish line per test, with `markers: true` |
 
@@ -78,11 +76,11 @@ Collected: `cpu` (per-core, incl. `usage_steal`), `mem`, `swap`, `pressure` (PSI
 stall time, the highest-signal metric here), `disk` (bytes **and inodes**), `diskio`, `net`,
 `netstat`, `nstat`, `processes`, `kernel`, `linux_sysctl_fs`, `conntrack` (when the module is
 loaded), and `procstat` for jujud, containerd, dockerd, lxd, snapd, kubelet, pebble, mongod,
-pytest, Telegraf itself, and the log watchers with their `juju`, `lxc`, `tail` and `dmesg` processes,
+pytest, Telegraf itself, and the log watchers with their `juju`, `lxc` and `dmesg` processes,
 the `journalctl` that follows snapd, and the `journalctl` they start inside LXD containers.
 
 Every metric carries `run_id`, `run_attempt`, `repo`, `workflow`, `job`, `sha`, `ref`,
-`runner_name`, `runner_os` and `image_os`, so you can pull up one run or diff a good run against
+`runner_name`, `runner_os`, `image_os` and `arch`, so you can pull up one run or diff a good run against
 a flaky one.
 
 ### Juju logs
@@ -124,7 +122,7 @@ top, after a new marker.
 Pod output and container journals land in the artifact, so anything a workload prints could become
 readable by anyone who can read the repo. Before bundling, `stop` masks secrets in every collected
 log (see [Redaction](#redaction)), but this is best-effort. When logs may carry sensitive data you
-cannot enumerate, set `logs: false` and leave `test-log` and `markers` unset.
+cannot enumerate, set `logs: false` and leave `markers` unset.
 
 #### Redaction
 
@@ -146,6 +144,8 @@ are left untouched to keep them valid JSON.
 `redact-values`, so `test_login[hunter2]` stays readable unless `hunter2` is listed. A listed value
 with a quote, a backslash or a non-ASCII character does not match either, because pytest and JSON
 escape it in the id. Don't parametrize tests with secrets, or give those parameters an `ids=` value.
+The `failure` text holds whatever the assertion or exception printed, masked the same way. The plugin
+masks private keys in it itself, before cutting it to 4,000 characters.
 
 > [!WARNING]
 > The `env-*.json` snapshots are not redacted, and `logs: false` does not turn them off. `changes`
@@ -165,8 +165,7 @@ measured by procstat on the K8s legs of `consumer-sim`, which followed 31 files,
 | `ubuntu-26.04-arm` | uutils 0.10.0 | about 3.9 MB | 122 MB |
 
 Each LXD container adds an `lxc exec` client of about 22 MB RSS for its journal. An LXD run follows
-2 or 3 containers and a few snap log files. Every run reports these numbers in `metrics.json`,
-because procstat watches the watchers and their followers.
+2 or 3 containers and a few snap log files.
 
 ### Kernel, snapd and environment
 
@@ -199,28 +198,16 @@ masks them in its own log, and the [Redaction](#redaction) rules run on top.
 
 ### Test output and markers
 
-`stop` copies the file named by `test-log` into the bundle as `pytest.log` and redacts it. Use
-`shell: bash`, which sets `pipefail`, so `tee` keeps the test exit code:
-
-```yaml
-- shell: bash
-  run: pytest tests/integration 2>&1 | tee "$RUNNER_TEMP/test.log"
-
-- uses: canonical/flake0/.github/actions/collect@main
-  if: always()
-  with:
-    phase: stop
-    test-log: ${{ runner.temp }}/test.log
-```
-
 `markers.ndjson` records when each test started and finished, so you can match log lines to a test:
 
 ```json
 {"ts":"2026-11-06T10:00:00.123Z","event":"start","nodeid":"tests/integration/test_x.py::test_y"}
-{"ts":"2026-11-06T10:00:12.456Z","event":"finish","nodeid":"tests/integration/test_x.py::test_y","outcome":"failed","duration":12.3}
+{"ts":"2026-11-06T10:00:12.456Z","event":"finish","nodeid":"tests/integration/test_x.py::test_y","outcome":"failed","duration":12.3,"failure":"...\nE       assert 1 == 2\n\ntests/integration/test_x.py:42: AssertionError"}
 ```
 
-`outcome` is `passed`, `skipped`, `failed`, or `error` when setup or teardown failed. An attempt that
+`outcome` is `passed`, `skipped`, `xfailed`, `xpassed`, `failed`, or `error` when setup or teardown failed. A `failed` or
+`error` finish line also has `failure`: the last 4,000 characters of pytest's report for the first phase that
+failed, where the exception and the assertion are. An attempt that
 `pytest-rerunfailures` retries counts as failed, and each attempt gets its own pair of lines.
 `pytest-retry` retries inside one pair, so a test that passes on retry still shows `failed`.
 
@@ -290,18 +277,16 @@ jq -r '.metrics[]|select(.name=="disk")|"\(.tags.path) \(.fields.inodes_free)"' 
 ## Overhead
 
 Measured on every run, by having Telegraf watch its own process; the numbers travel inside the
-bundle and CI fails if they regress. On a 28-core host with 31 watched processes:
+bundle and CI fails if they regress. On a 4-core host with 53 watched processes:
 
 | | Measured | CI gate |
 |---|---|---|
-| CPU | 2.5% of one core (0.09% of the machine) | ≤ 10% of one core |
-| Memory | 44 MB private (63 MB Go `sys_bytes`) | ≤ 150 MB `sys_bytes` |
-| Disk | ~33 MB per 30 min, ~18x smaller once packed | — |
+| CPU | 0.9% of one core | ≤ 10% of one core |
+| Memory | 56 MB Go `sys_bytes` | ≤ 150 MB `sys_bytes` |
+| Disk | ~5.4 MB per 30 min, ~14x smaller once packed | — |
 
 Expect less on a smaller runner: cost scales with core count and with the number of matched
-processes. Expensive `/proc` walks are sampled at 10 s and 30 s rather than 2 s precisely to keep
-this in range — see [`docs/plan.md` §7](docs/plan.md) for the per-input cost table and the
-reasoning.
+processes.
 
 ## Notes
 

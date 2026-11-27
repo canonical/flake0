@@ -1,0 +1,29 @@
+{
+  "index_patterns": [
+    "ci-logs-lxd-*"
+  ],
+  "composed_of": [
+    "ci-logs-common"
+  ],
+  "template": {
+    "settings": {
+      "number_of_shards": 3
+    },
+    "mappings": {
+      "properties": {
+        "container": {
+          "type": "keyword"
+        },
+        "host": {
+          "type": "keyword"
+        },
+        "process": {
+          "type": "keyword"
+        },
+        "pid": {
+          "type": "keyword"
+        }
+      }
+    }
+  }
+}
